@@ -1,0 +1,31 @@
+node_modules
+.next
+out
+coverage
+.DS_Store
+.env.local
+.playground
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Analysis and documentation files
+ARCHITECTURE_ANALYSIS.md
+CODE_CHANGES_SUMMARY.md
+COMPREHENSIVE_CODE_ANALYSIS.md
+CRITICAL_FIXES.md
+ISSUES_QUICK_REFERENCE.md
+KIMI_API_ANALYSIS.md
+KIMI_IMPLEMENTATION_REVIEW.md
+KIMI_USAGE_PATTERN.md
+PROMPT_ENGINEERING_FIX.md
+TEST_KIMI_FIX.md
+UI_IMPROVEMENTS_SUMMARY.md
+ToDos.md
+
+# Build artifacts
+tsconfig.tsbuildinfo
+.next
+out

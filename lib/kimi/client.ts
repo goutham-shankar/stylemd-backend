@@ -1,0 +1,503 @@
+import { readFile, readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
+export interface ToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+  };
+}
+
+interface ToolResult {
+  type: "tool_result";
+  tool_use_id: string;
+  content: string;
+}
+
+interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+}
+
+interface KimiMessage {
+  role: "user" | "assistant";
+  content: string | Array<{ type: string; text?: string; tool_use_id?: string; content?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+}
+
+interface KimiResponse {
+  choices: Array<{
+    message: {
+      content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+    };
+    finish_reason: string;
+  }>;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+  };
+}
+
+type KimiApiErrorPayload = {
+  error?: {
+    message?: string;
+    type?: string;
+  };
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => {
+    setTimeout(resolvePromise, ms);
+  });
+}
+
+/**
+ * Kimi AI client using OpenAI-compatible API
+ * Uses k2-thinking for unlimited reasoning steps
+ */
+export class KimiClient {
+  private apiKey: string;
+  private baseURL = "https://api.moonshot.ai/v1";
+  private model = "kimi-k2-thinking";
+  private maxApiRetries = 2;
+
+  constructor(apiKey?: string) {
+    this.apiKey = apiKey || process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || "";
+    if (!this.apiKey) {
+      throw new Error("KIMI_API_KEY or MOONSHOT_API_KEY environment variable not set");
+    }
+    console.log(`🔑 [KIMI] Initialized (model: ${this.model}, baseURL: ${this.baseURL})`);
+  }
+
+  /**
+   * Execute a tool based on name and arguments
+   */
+  async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    workspaceDir: string,
+  ): Promise<string> {
+    const baseResolved = resolve(workspaceDir);
+    console.log(`🛠️  [KIMI] Executing tool: ${name}`, { args });
+
+    switch (name) {
+      case "Read":
+        return this.toolRead(baseResolved, args);
+      case "Grep":
+        return this.toolGrep(baseResolved, args);
+      case "Glob":
+        return this.toolGlob(baseResolved, args);
+      case "LS":
+        return this.toolLS(baseResolved, args);
+      default:
+        return `Tool not found: ${name}`;
+    }
+  }
+
+  /**
+   * Read file contents
+   */
+  private async toolRead(baseDir: string, args: Record<string, unknown>): Promise<string> {
+    const filePath = resolve(baseDir, String(args.file_path || ""));
+
+    if (!filePath.startsWith(baseDir)) {
+      return `Error: Path ${args.file_path} outside workspace`;
+    }
+
+    try {
+      const content = await readFile(filePath, "utf-8");
+      const offset = Number(args.offset || 0);
+      const limit = Number(args.limit || content.length);
+
+      if (offset > 0 || limit < content.length) {
+        return content.slice(offset, offset + limit);
+      }
+      return content;
+    } catch (err) {
+      return `Error reading ${args.file_path}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
+   * Search for pattern in files
+   */
+  private async toolGrep(baseDir: string, args: Record<string, unknown>): Promise<string> {
+    const pattern = String(args.pattern || "");
+    const filePath = String(args.file_path || "");
+
+    if (!filePath) {
+      return "Error: file_path required";
+    }
+
+    const resolved = resolve(baseDir, filePath);
+    if (!resolved.startsWith(baseDir)) {
+      return `Error: Path ${filePath} outside workspace`;
+    }
+
+    try {
+      const content = await readFile(resolved, "utf-8");
+      const regex = new RegExp(pattern, "gm");
+      const matches = content.match(regex) || [];
+      return matches.length > 0 ? matches.join("\n") : "No matches found";
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
+   * List files matching glob pattern
+   */
+  private async toolGlob(baseDir: string, args: Record<string, unknown>): Promise<string> {
+    const pattern = String(args.pattern || "**/*");
+    const maxResults = Number(args.max_results || 1000);
+
+    try {
+      const results = await this.globFiles(baseDir, pattern, maxResults);
+      return results.length > 0 ? results.join("\n") : "No matches";
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
+   * List directory contents
+   */
+  private async toolLS(baseDir: string, args: Record<string, unknown>): Promise<string> {
+    const dirPath = String(args.dir_path || ".");
+    const resolved = resolve(baseDir, dirPath);
+
+    if (!resolved.startsWith(baseDir)) {
+      return `Error: Path ${dirPath} outside workspace`;
+    }
+
+    try {
+      const entries = await readdir(resolved, { withFileTypes: true });
+      const lines = entries.map((entry) => {
+        const isDir = entry.isDirectory();
+        return `${isDir ? "d" : "-"} ${entry.name}`;
+      });
+      return lines.join("\n");
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
+   * Simple glob file matching
+   */
+  private async globFiles(baseDir: string, pattern: string, maxResults: number): Promise<string[]> {
+    const results: string[] = [];
+
+    const traverseDir = async (dir: string): Promise<void> => {
+      if (results.length >= maxResults) return;
+
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (results.length >= maxResults) break;
+
+          const fullPath = join(dir, entry.name);
+          const relative = fullPath.slice(baseDir.length + 1);
+
+          if (this.matchesGlobPattern(relative, pattern)) {
+            results.push(relative);
+          }
+
+          if (entry.isDirectory()) {
+            await traverseDir(fullPath);
+          }
+        }
+      } catch {
+        // Skip directories we can't read
+      }
+    };
+
+    await traverseDir(baseDir);
+    return results;
+  }
+
+  /**
+   * Simple glob pattern matching
+   */
+  private matchesGlobPattern(path: string, pattern: string): boolean {
+    if (pattern === "**/*") return true;
+
+    const parts = pattern.split("/");
+    const pathParts = path.split("/");
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part === "**") {
+        // Match any number of directories
+        return true;
+      }
+      if (i >= pathParts.length) {
+        return false;
+      }
+      if (part !== "*" && part !== pathParts[i]) {
+        return false;
+      }
+    }
+
+    return pathParts.length === parts.length;
+  }
+
+  /**
+   * Query Kimi with tool use
+   */
+  async query(
+    systemPrompt: string,
+    userMessage: string,
+    workspaceDir: string,
+    tools: ToolDefinition[] = [],
+    options?: {
+      maxSteps?: number;
+      onToken?: (tokenUsage: TokenUsage) => void;
+      onToolCall?: (name: string, args: Record<string, unknown>) => void;
+    },
+  ): Promise<{ text: string; tokenUsage: TokenUsage }> {
+    const maxSteps = options?.maxSteps || 300;
+    const messages: KimiMessage[] = [{ role: "user", content: userMessage }];
+
+    console.log(`🚀 [KIMI] Starting query with max ${maxSteps} tool steps (k2-thinking mode)`);
+    console.log(`📚 [KIMI] Available tools: ${tools.map((t) => t.function.name).join(", ")}`);
+
+    const totalTokens = { input_tokens: 0, output_tokens: 0 };
+    let stepCount = 0;
+
+    while (stepCount < maxSteps) {
+      stepCount++;
+      console.log(`\n⏳ [KIMI] Step ${stepCount}/${maxSteps}...`);
+
+      // Call Kimi API
+      const response = await this.callAPI(systemPrompt, messages, tools);
+      const { choices, usage } = response;
+
+      // DEBUG: Log response structure for debugging
+      if (!choices || choices.length === 0) {
+        console.error(`⚠️  [KIMI] Unexpected API response structure:`);
+        console.error(`   Response keys: ${Object.keys(response).join(", ")}`);
+        console.error(`   Choices count: ${choices?.length ?? "undefined"}`);
+        console.error(`   Full response: ${JSON.stringify(response).slice(0, 500)}`);
+      }
+
+      totalTokens.input_tokens += usage.prompt_tokens;
+      totalTokens.output_tokens += usage.completion_tokens;
+      options?.onToken?.(totalTokens);
+
+      console.log(`💰 [KIMI] Tokens - Input: ${usage.prompt_tokens}, Output: ${usage.completion_tokens}`);
+      console.log(`📊 [KIMI] Cumulative - Input: ${totalTokens.input_tokens}, Output: ${totalTokens.output_tokens}`);
+
+      if (!choices[0]) {
+        console.log(`✅ [KIMI] No more choices, terminating`);
+        break;
+      }
+
+      const assistantMessage = choices[0].message;
+
+      // Normalize contentArray to always be an array
+      // Handle case where content is a string (simple text response) or array (with tools)
+      const contentArray = Array.isArray(assistantMessage.content)
+        ? assistantMessage.content
+        : typeof assistantMessage.content === "string"
+          ? [{ type: "text", text: assistantMessage.content }]
+          : [];
+
+      // DEBUG: Log the assistant message structure
+      console.log(`📨 [KIMI] Assistant message structure:`);
+      console.log(`   Content type: ${typeof assistantMessage.content}`);
+      console.log(`   Is array: ${Array.isArray(assistantMessage.content)}`);
+      if (typeof assistantMessage.content === "string") {
+        const stringContent = assistantMessage.content as string;
+        console.log(`   String length: ${stringContent.length}`);
+        console.log(`   Preview: ${stringContent.slice(0, 200)}`);
+      } else if (Array.isArray(assistantMessage.content)) {
+        const arrayContent = assistantMessage.content as Array<{ type?: string }>;
+        console.log(`   Array length: ${arrayContent.length}`);
+        console.log(`   Items: ${arrayContent.map((item) => item.type).join(", ")}`);
+      }
+
+      // Check if content has actual meaningful data (not just empty text)
+      const hasActualContent = contentArray.some((item) => {
+        if (item.type === "text") {
+          return (item as { text?: string }).text?.trim().length ?? 0 > 0;
+        }
+        // Non-text items (tool_use, etc.) count as actual content
+        return item.type !== "text";
+      });
+
+      // Only push assistant message if it has actual content
+      if (hasActualContent) {
+        messages.push({ role: "assistant", content: assistantMessage.content });
+      }
+
+      let hasToolUse = false;
+      const toolResults: ToolResult[] = [];
+
+      for (const item of contentArray) {
+        if (item.type === "text") {
+          // Final response text - only return if we have actual content
+          if (choices[0].finish_reason === "stop" && item.text && item.text.trim()) {
+            console.log(`\n✨ [KIMI] Query complete (finish_reason: stop)`);
+            return { text: item.text, tokenUsage: totalTokens };
+          }
+        } else if (item.type === "tool_use") {
+          hasToolUse = true;
+          const toolName = item.name || "";
+          const toolInput = item.input || {};
+
+          console.log(`  → Tool call: ${toolName}`);
+          options?.onToolCall?.(toolName, toolInput as Record<string, unknown>);
+
+          // Execute tool
+          const toolResult = await this.executeTool(toolName, toolInput as Record<string, unknown>, workspaceDir);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: item.id || "",
+            content: toolResult,
+          });
+          console.log(`  ✓ Tool result: ${toolResult.slice(0, 100)}${toolResult.length > 100 ? "..." : ""}`);
+        }
+      }
+
+      if (!hasToolUse || choices[0].finish_reason === "stop") {
+        // Extract final text from last assistant message
+        const lastTextItem = contentArray.find((item) => item.type === "text");
+        if (lastTextItem?.text && lastTextItem.text.trim()) {
+          const responseText = lastTextItem.text.trim();
+          
+          // Check if response looks like JSON (starts with { or [)
+          // If not, treat as thinking/analysis and force JSON output
+          const looksLikeJson = responseText.startsWith("{") || responseText.startsWith("[");
+          
+          if (looksLikeJson) {
+            console.log(`\n✨ [KIMI] Query complete (no more tool calls)`);
+            return { text: responseText, tokenUsage: totalTokens };
+          }
+          
+          // Response is natural language (thinking/analysis), not JSON - force JSON output
+          if (stepCount < maxSteps) {
+            console.log(`⚠️  [KIMI] Response is thinking/analysis, not JSON. Forcing JSON output...`);
+            messages.push({
+              role: "user",
+              content: "{\"URGENT\": true, \"instruction\": \"Output ONLY valid JSON. No explanation. No thinking. JSON ONLY NOW.\", \"required_output\": {\"units\": [{\"type\": \"single\", \"component_id\": \"...\", \"study_label\": \"...\", \"reason\": \"...\"}]}}",
+            });
+            continue; // Continue loop to get the JSON response
+          }
+        }
+
+        // DEBUGGING: No text found - log what we got instead
+        console.log(`⚠️  [KIMI] No text found in response. Content array:`);
+        console.log(`   Length: ${contentArray.length}`);
+        console.log(`   Items: ${contentArray.map((item) => `${item.type}${item.type === "text" ? `(len=${(item.text || "").length})` : ""}`).join(", ")}`);
+        console.log(`   Full content: ${JSON.stringify(contentArray).slice(0, 500)}`);
+        console.log(`   Finish reason: ${choices[0].finish_reason}`);
+        
+        // If we have no text and no tool use, force JSON output
+        if (!hasToolUse && stepCount < maxSteps) {
+          console.log(`⚠️  [KIMI] Forcing JSON output with explicit schema...`);
+          messages.push({
+            role: "user",
+            content: "{\"CRITICAL\": true, \"OUTPUT_NOW\": \"JSON_ONLY\", \"schema\": {\"units\": [{\"type\": \"single|merge\", \"component_id\": \"string\", \"component_ids\": [\"string\", \"string\"], \"study_label\": \"string\", \"reason\": \"string\"}]}}",
+          });
+          continue;
+        }
+
+        console.log(`\n✨ [KIMI] Query complete (no text response)`);
+        return { text: "", tokenUsage: totalTokens };
+      }
+
+      // Add tool results to messages
+      if (toolResults.length > 0) {
+        messages.push({
+          role: "user",
+          content: toolResults.map((tr) => ({
+            type: "tool_result",
+            tool_use_id: tr.tool_use_id,
+            content: tr.content,
+          })),
+        });
+      }
+    }
+
+    console.log(`\n⚠️  [KIMI] Query reached max steps (${maxSteps})`);
+    return { text: "", tokenUsage: totalTokens };
+  }
+
+  /**
+   * Call Kimi API directly
+   */
+  private async callAPI(
+    systemPrompt: string,
+    messages: KimiMessage[],
+    tools: ToolDefinition[] = [],
+  ): Promise<KimiResponse> {
+    const payload = {
+      model: this.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages,
+      ],
+      temperature: 0.7,
+      top_p: 0.95,
+      ...(tools.length > 0 && { tools }),
+    };
+
+    console.log(`🚀 [KIMI] Sending request to: ${this.baseURL}/chat/completions`);
+    console.log(`📝 [KIMI] Request payload keys: ${Object.keys(payload).join(", ")}`);
+
+    for (let attempt = 0; attempt <= this.maxApiRetries; attempt += 1) {
+      const response = await fetch(`${this.baseURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      console.log(`📊 [KIMI] Response status: ${response.status} ${response.statusText}`);
+
+      if (response.ok) {
+        return (await response.json()) as KimiResponse;
+      }
+
+      const errorText = await response.text();
+      let parsedError: KimiApiErrorPayload | null = null;
+      try {
+        parsedError = JSON.parse(errorText) as KimiApiErrorPayload;
+      } catch {
+        parsedError = null;
+      }
+
+      const errorType = parsedError?.error?.type ?? "";
+      const errorMessage = parsedError?.error?.message ?? errorText;
+      const isRateLimit = response.status === 429 || errorType.includes("rate_limit");
+      const isTpdExhausted = errorType === "rate_limit_reached_error"
+        || errorMessage.includes("TPD rate limit");
+
+      if (isRateLimit && isTpdExhausted) {
+        const normalizedMessage = `Kimi rate limit reached (TPD exhausted): ${errorMessage}`;
+        console.error(`❌ [KIMI] ${normalizedMessage}`);
+        throw new Error(normalizedMessage);
+      }
+
+      if (isRateLimit && attempt < this.maxApiRetries) {
+        const backoffMs = 1500 * (attempt + 1);
+        console.warn(`⚠️  [KIMI] Rate-limited. Retrying in ${backoffMs}ms (attempt ${attempt + 1}/${this.maxApiRetries})`);
+        await sleep(backoffMs);
+        continue;
+      }
+
+      console.error(`❌ [KIMI] API error: ${response.status} - ${errorText}`);
+      throw new Error(`Kimi API error: ${response.status} - ${errorText}`);
+    }
+
+    throw new Error("Kimi API error: retries exhausted without response");
+  }
+}
