@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 
 export interface ToolDefinition {
   type: "function";
@@ -20,6 +20,27 @@ interface ToolResult {
   content: string;
 }
 
+const MAX_TOOL_RESULT_CHARS = 60_000;
+const MAX_DEFAULT_READ_CHARS = 120_000;
+const BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".svg",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".eot",
+  ".pdf",
+]);
+
 interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
@@ -33,7 +54,15 @@ interface KimiMessage {
 interface KimiResponse {
   choices: Array<{
     message: {
-      content: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+      content: string | Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+      tool_calls?: Array<{
+        id: string;
+        type: "function";
+        function: {
+          name: string;
+          arguments: string;
+        };
+      }>;
     };
     finish_reason: string;
   }>;
@@ -49,6 +78,62 @@ type KimiApiErrorPayload = {
     type?: string;
   };
 };
+
+type AssistantContentItem = {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+};
+
+function stripEmptyTextItems(items: AssistantContentItem[]): AssistantContentItem[] {
+  return items.filter((item) => {
+    if (item.type !== "text") {
+      return true;
+    }
+    return typeof item.text === "string" && item.text.trim().length > 0;
+  });
+}
+
+function truncateForToolMessage(content: string): string {
+  if (content.length <= MAX_TOOL_RESULT_CHARS) {
+    return content;
+  }
+  return `${content.slice(0, MAX_TOOL_RESULT_CHARS)}\n...[truncated ${content.length - MAX_TOOL_RESULT_CHARS} chars]`;
+}
+
+function normalizeAssistantContent(
+  message: KimiResponse["choices"][number]["message"],
+): AssistantContentItem[] {
+  const contentArray = Array.isArray(message.content)
+    ? message.content
+    : typeof message.content === "string"
+      ? [{ type: "text", text: message.content }]
+      : [];
+
+  if (!message.tool_calls || message.tool_calls.length === 0) {
+    return contentArray;
+  }
+
+  const toolItems: AssistantContentItem[] = message.tool_calls.map((toolCall) => {
+    let parsedArgs: Record<string, unknown> = {};
+    try {
+      parsedArgs = JSON.parse(toolCall.function.arguments || "{}");
+    } catch {
+      parsedArgs = {};
+    }
+
+    return {
+      type: "tool_use",
+      id: toolCall.id,
+      name: toolCall.function.name,
+      input: parsedArgs,
+    };
+  });
+
+  return [...contentArray, ...toolItems];
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => {
@@ -109,13 +194,29 @@ export class KimiClient {
       return `Error: Path ${args.file_path} outside workspace`;
     }
 
+    if (BINARY_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+      return `Error: Cannot Read binary file '${args.file_path}'. Use text/json artifacts only.`;
+    }
+
     try {
       const content = await readFile(filePath, "utf-8");
-      const offset = Number(args.offset || 0);
-      const limit = Number(args.limit || content.length);
+      const parsedOffset = Number(args.offset);
+      const parsedLimit = Number(args.limit);
+      const offset = Number.isFinite(parsedOffset) ? Math.max(0, Math.floor(parsedOffset)) : 0;
+      const limit = Number.isFinite(parsedLimit)
+        ? Math.max(0, Math.floor(parsedLimit))
+        : Math.min(content.length, MAX_DEFAULT_READ_CHARS);
+
+      if (offset >= content.length || limit === 0) {
+        return "";
+      }
 
       if (offset > 0 || limit < content.length) {
-        return content.slice(offset, offset + limit);
+        const sliced = content.slice(offset, offset + limit);
+        const truncatedNote = !Number.isFinite(parsedLimit) && offset + limit < content.length
+          ? `\n...[truncated; use Read with offset+limit for more]`
+          : "";
+        return `${sliced}${truncatedNote}`;
       }
       return content;
     } catch (err) {
@@ -300,18 +401,15 @@ export class KimiClient {
 
       const assistantMessage = choices[0].message;
 
-      // Normalize contentArray to always be an array
-      // Handle case where content is a string (simple text response) or array (with tools)
-      const contentArray = Array.isArray(assistantMessage.content)
-        ? assistantMessage.content
-        : typeof assistantMessage.content === "string"
-          ? [{ type: "text", text: assistantMessage.content }]
-          : [];
+      const contentArray = normalizeAssistantContent(assistantMessage);
 
       // DEBUG: Log the assistant message structure
       console.log(`📨 [KIMI] Assistant message structure:`);
       console.log(`   Content type: ${typeof assistantMessage.content}`);
       console.log(`   Is array: ${Array.isArray(assistantMessage.content)}`);
+      if (assistantMessage.tool_calls?.length) {
+        console.log(`   Tool calls: ${assistantMessage.tool_calls.length}`);
+      }
       if (typeof assistantMessage.content === "string") {
         const stringContent = assistantMessage.content as string;
         console.log(`   String length: ${stringContent.length}`);
@@ -322,18 +420,18 @@ export class KimiClient {
         console.log(`   Items: ${arrayContent.map((item) => item.type).join(", ")}`);
       }
 
-      // Check if content has actual meaningful data (not just empty text)
-      const hasActualContent = contentArray.some((item) => {
-        if (item.type === "text") {
-          return (item as { text?: string }).text?.trim().length ?? 0 > 0;
-        }
-        // Non-text items (tool_use, etc.) count as actual content
-        return item.type !== "text";
-      });
+      const sanitizedContentArray = stripEmptyTextItems(contentArray);
+      const assistantTextItems = sanitizedContentArray.filter((item) => item.type === "text");
 
-      // Only push assistant message if it has actual content
-      if (hasActualContent) {
-        messages.push({ role: "assistant", content: assistantMessage.content });
+      // Moonshot chat/completions expects assistant message content as text, not custom tool_use parts.
+      if (assistantTextItems.length > 0) {
+        const assistantText = assistantTextItems
+          .map((item) => item.text ?? "")
+          .join("\n")
+          .trim();
+        if (assistantText.length > 0) {
+          messages.push({ role: "assistant", content: assistantText });
+        }
       }
 
       let hasToolUse = false;
@@ -359,7 +457,7 @@ export class KimiClient {
           toolResults.push({
             type: "tool_result",
             tool_use_id: item.id || "",
-            content: toolResult,
+            content: truncateForToolMessage(toolResult),
           });
           console.log(`  ✓ Tool result: ${toolResult.slice(0, 100)}${toolResult.length > 100 ? "..." : ""}`);
         }
@@ -412,15 +510,15 @@ export class KimiClient {
         return { text: "", tokenUsage: totalTokens };
       }
 
-      // Add tool results to messages
+      // Add tool results to messages as plain text for OpenAI-compatible chat format.
       if (toolResults.length > 0) {
+        const compactToolResults = toolResults.map((result) => ({
+          tool_use_id: result.tool_use_id,
+          content: result.content,
+        }));
         messages.push({
           role: "user",
-          content: toolResults.map((tr) => ({
-            type: "tool_result",
-            tool_use_id: tr.tool_use_id,
-            content: tr.content,
-          })),
+          content: `TOOL_RESULTS_JSON:\n${JSON.stringify(compactToolResults)}`,
         });
       }
     }
@@ -452,14 +550,26 @@ export class KimiClient {
     console.log(`📝 [KIMI] Request payload keys: ${Object.keys(payload).join(", ")}`);
 
     for (let attempt = 0; attempt <= this.maxApiRetries; attempt += 1) {
-      const response = await fetch(`${this.baseURL}/chat/completions`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${this.baseURL}/chat/completions`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (attempt < this.maxApiRetries) {
+          const backoffMs = 1500 * (attempt + 1);
+          console.warn(`⚠️  [KIMI] Network error '${message}'. Retrying in ${backoffMs}ms (attempt ${attempt + 1}/${this.maxApiRetries})`);
+          await sleep(backoffMs);
+          continue;
+        }
+        throw new Error(`Kimi network error: ${message}`);
+      }
 
       console.log(`📊 [KIMI] Response status: ${response.status} ${response.statusText}`);
 

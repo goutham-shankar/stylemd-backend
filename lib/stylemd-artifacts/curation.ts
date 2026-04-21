@@ -488,7 +488,7 @@ function buildDecisionPrompt(promptInput: CurationPromptInput): string {
     "- selected component files under components/<component_id>/",
     "",
     "Tool constraints:",
-    "- for large text files, use Read with offset + limit windows",
+    "- for large text files, use Read with non-negative offset + limit windows",
     "",
     "Decision priorities:",
     "- preserve reconstruction-critical layout/composition patterns",
@@ -1046,21 +1046,23 @@ export async function runCurateStage(input: RunCurateInput): Promise<StageOutput
   let runClaudeQuery = input.runClaudeQuery ?? runClaudeCurationQuery;
   if (runtime.provider === "kimi") {
     console.log(`🎯 [STYLEMD] Using KIMI provider for curation stage`);
-    // Adapt Kimi query function to Claude query interface
-    runClaudeQuery = async (queryInput: ClaudeCurationQueryInput) => {
-      return runKimiCurationQuery({
-        runId: queryInput.runId,
-        workspaceDir: queryInput.workspaceDir,
-        runtime: queryInput.runtime,
-        systemPrompt: queryInput.systemPrompt,
-        prompt: queryInput.prompt,
-        signal: queryInput.signal,
-        queryLabel: queryInput.queryLabel,
-        onTokenUsage: (inputTokens, outputTokens) => {
-          storeTokenUsage(queryInput.runId, queryInput.queryLabel ?? "curate-decision", inputTokens, outputTokens);
-        },
-      });
-    };
+    // Adapt Kimi query function to Claude query interface when no test override is supplied.
+    if (!input.runClaudeQuery) {
+      runClaudeQuery = async (queryInput: ClaudeCurationQueryInput) => {
+        return runKimiCurationQuery({
+          runId: queryInput.runId,
+          workspaceDir: queryInput.workspaceDir,
+          runtime: queryInput.runtime,
+          systemPrompt: queryInput.systemPrompt,
+          prompt: queryInput.prompt,
+          signal: queryInput.signal,
+          queryLabel: queryInput.queryLabel,
+          onTokenUsage: (inputTokens, outputTokens) => {
+            storeTokenUsage(queryInput.runId, queryInput.queryLabel ?? "curate-decision", inputTokens, outputTokens);
+          },
+        });
+      };
+    }
   } else {
     console.log(`🎯 [STYLEMD] Using CLAUDE provider for curation stage`);
   }

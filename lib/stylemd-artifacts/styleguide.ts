@@ -676,7 +676,7 @@ function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
     "Use only these tools: Read, Grep, Glob, LS.",
     "Never call Agent, WebSearch, WebFetch, Bash, Edit, Write, or MultiEdit.",
     "All file paths are relative to the workspace root. Never prefix paths with '/'.",
-    "For large JSON/text files, use Read with offset + limit windows.",
+    "For large JSON/text files, use Read with non-negative offset + limit windows.",
     "",
     "Primary files to inspect:",
     "- styleguide/evidence.agent.json",
@@ -707,7 +707,7 @@ function buildRetryPrompt(input: {
     "Use only these tools: Read, Grep, Glob, LS.",
     "Never call Agent.",
     "Use relative paths only; do not prefix '/' on file paths.",
-    "For large JSON/text files, use Read with offset + limit windows.",
+    "For large JSON/text files, use Read with non-negative offset + limit windows.",
     "The prior draft failed these checks:",
     ...qualityIssues.map((issue) => `- ${issue}`),
     "",
@@ -747,7 +747,7 @@ function validateStyleguideMarkdownQuality(
     issues.push("markdown is empty");
     return issues;
   }
-  if (trimmed.length < 180) {
+  if (trimmed.length < 220) {
     issues.push("markdown is too short to be reconstructable");
   }
   if (!/^#\s+/m.test(markdown) && !/^##\s+/m.test(markdown)) {
@@ -763,6 +763,24 @@ function validateStyleguideMarkdownQuality(
       issues.push(`missing required typography family '${family}' in markdown output`);
     }
   }
+
+  const requiredCoverageChecks: Array<{ label: string; pattern: RegExp }> = [
+    { label: "composition coverage", pattern: /composition|hierarchy|layout/i },
+    { label: "color coverage", pattern: /color|palette|surface/i },
+    { label: "spacing coverage", pattern: /spacing|rhythm|padding|margin/i },
+    { label: "interaction coverage", pattern: /interaction|hover|focus|state/i },
+    { label: "responsive coverage", pattern: /responsive|breakpoint|mobile|desktop/i },
+  ];
+
+  const missingCoverageLabels = requiredCoverageChecks
+    .filter((check) => !check.pattern.test(markdown))
+    .map((check) => check.label);
+
+  // Require broad completeness without overfitting to exact vocabulary.
+  if (missingCoverageLabels.length > 2) {
+    issues.push(`missing coverage areas: ${missingCoverageLabels.join(", ")}`);
+  }
+
   return issues;
 }
 
@@ -834,7 +852,7 @@ function buildShowcasePrompt(promptInput: ShowcasePromptInput): string {
     "Use only these tools: Read, Grep, Glob, LS.",
     "Never call Agent.",
     "Use relative workspace paths exactly as provided (for example 'page_styles/fonts.local.css', not '/page_styles/fonts.local.css').",
-    "For large JSON/text files, use Read with offset + limit windows.",
+    "For large JSON/text files, use Read with non-negative offset + limit windows.",
     "",
     "Hard constraints:",
     "1. No <script> tags and no JavaScript execution.",
@@ -866,7 +884,7 @@ function buildShowcaseRepairPrompt(input: {
     "Use only these tools: Read, Grep, Glob, LS.",
     "Never call Agent.",
     "Use relative workspace paths exactly as provided.",
-    "For large JSON/text files, use Read with offset + limit windows.",
+    "For large JSON/text files, use Read with non-negative offset + limit windows.",
     "",
     "Previous output failed checks:",
     ...failedIssues.map((issue) => `- ${issue}`),
@@ -1049,6 +1067,7 @@ function normalizeReferencePath(ref: string): string {
 
 function resolveLocalRefToRunFile(input: {
   runDir: string;
+  baseDir?: string;
   ref: string;
 }): {
   ok: boolean;
@@ -1090,6 +1109,7 @@ function resolveLocalRefToRunFile(input: {
   }
 
   const runRoot = resolve(input.runDir);
+  const baseDir = resolve(input.baseDir ?? input.runDir);
   const showcaseDir = resolve(runRoot, "styleguide");
 
   const candidates = new Set<string>();
@@ -1098,6 +1118,7 @@ function resolveLocalRefToRunFile(input: {
   } else {
     const cleaned = candidateRef.replace(/^\.?\//, "");
     const relToRun = cleaned.startsWith("/") ? cleaned.slice(1) : cleaned;
+    candidates.add(resolve(baseDir, relToRun));
     candidates.add(resolve(runRoot, relToRun));
     candidates.add(resolve(showcaseDir, relToRun));
     candidates.add(resolve(showcaseDir, candidateRef));
@@ -1223,10 +1244,12 @@ function rewriteLocalFontCssToArtifactUrls(input: {
   const { runDir } = input;
   const issues: string[] = [];
   const cssUrlRegex = /url\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+  const cssBaseDir = resolve(runDir, "page_styles");
 
   const rewritten = input.cssText.replace(cssUrlRegex, (_match, quote: string, value: string) => {
     const resolved = resolveLocalRefToRunFile({
       runDir,
+      baseDir: cssBaseDir,
       ref: value,
     });
     if (!resolved.ok) {

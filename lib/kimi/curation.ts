@@ -23,6 +23,22 @@ function isRateLimitError(error: unknown): boolean {
     || normalized.includes("tpd");
 }
 
+function isTransientNetworkError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return normalized.includes("fetch failed")
+    || normalized.includes("network")
+    || normalized.includes("timeout")
+    || normalized.includes("econnreset")
+    || normalized.includes("econnrefused")
+    || normalized.includes("enotfound")
+    || normalized.includes("eai_again")
+    || normalized.includes("etimedout")
+    || normalized.includes("502")
+    || normalized.includes("503")
+    || normalized.includes("504");
+}
+
 /**
  * Execute a curation query using Kimi AI
  * Replaces Claude SDK query with Kimi API
@@ -42,6 +58,10 @@ export async function runKimiCurationQuery(input: KimiCurationQueryInput): Promi
 
   console.log(`\n📋 [KIMI] Running CURATION stage for run: ${runId}`);
   console.log(`   Workspace: ${workspaceDir}`);
+  const configuredMaxSteps = Number(process.env.STYLEMD_KIMI_CURATION_MAX_STEPS);
+  const maxSteps = Number.isFinite(configuredMaxSteps) && configuredMaxSteps > 0
+    ? Math.floor(configuredMaxSteps)
+    : 90;
 
   const client = new KimiClient();
 
@@ -55,8 +75,8 @@ export async function runKimiCurationQuery(input: KimiCurationQueryInput): Promi
           type: "object",
           properties: {
             file_path: { type: "string", description: "Path to file relative to workspace" },
-            offset: { type: "number", description: "Byte offset to start reading" },
-            limit: { type: "number", description: "Maximum bytes to read" },
+            offset: { type: "number", minimum: 0, description: "Byte offset to start reading" },
+            limit: { type: "number", minimum: 0, description: "Maximum bytes to read" },
           },
           required: ["file_path"],
         },
@@ -111,11 +131,10 @@ export async function runKimiCurationQuery(input: KimiCurationQueryInput): Promi
   // Retry loop for rate limit handling
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      // Optimize token usage: reduce max steps from 300 to 50 for curation
-      // Most curation queries complete in <30 steps; 50 provides safe buffer
-      // This single change can reduce token consumption by 40-60%
+      // Prioritize curation accuracy with a higher reasoning budget.
+      // This can be tuned via STYLEMD_KIMI_CURATION_MAX_STEPS.
       const result = await client.query(systemPrompt, prompt, workspaceDir, tools, {
-        maxSteps: 50, // Reduced from 300: most curation queries need <30 steps
+        maxSteps,
         onToken: (usage) => {
           console.log(`   Cumulative tokens - Input: ${usage.input_tokens}, Output: ${usage.output_tokens}`);
           onTokenUsage?.(usage.input_tokens, usage.output_tokens);
@@ -126,6 +145,7 @@ export async function runKimiCurationQuery(input: KimiCurationQueryInput): Promi
       return result.text;
     } catch (error) {
       const isRateLimit = isRateLimitError(error);
+      const isTransient = isTransientNetworkError(error);
       const isLastAttempt = attempt >= maxRetries;
 
       if (isRateLimit) {
@@ -137,9 +157,11 @@ export async function runKimiCurationQuery(input: KimiCurationQueryInput): Promi
           await new Promise(resolve => setTimeout(resolve, retryDelayMs));
           continue;
         }
-      } else if (!isLastAttempt) {
-        console.error(`❌ [KIMI] CURATION stage failed (attempt ${attempt + 1}/${maxRetries})`);
-        throw error;
+      } else if (isTransient && !isLastAttempt) {
+        const delayS = (retryDelayMs / 1000).toFixed(1);
+        console.warn(`⚠️  [KIMI] Transient network error. Retrying in ${delayS}s (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        continue;
       } else {
         console.error(`❌ [KIMI] CURATION stage failed`);
       }

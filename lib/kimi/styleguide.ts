@@ -50,8 +50,8 @@ export async function runKimiStyleguideQuery(input: KimiStyleguideQueryInput): P
           type: "object",
           properties: {
             file_path: { type: "string", description: "Path to file relative to workspace" },
-            offset: { type: "number", description: "Byte offset to start reading" },
-            limit: { type: "number", description: "Maximum bytes to read" },
+            offset: { type: "number", minimum: 0, description: "Byte offset to start reading" },
+            limit: { type: "number", minimum: 0, description: "Maximum bytes to read" },
           },
           required: ["file_path"],
         },

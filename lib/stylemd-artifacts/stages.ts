@@ -1122,6 +1122,10 @@ function buildLocalFontCss(entries: StyleMdFontManifestEntry[], runId: string): 
     if (!localPath) {
       continue;
     }
+    const cssRelativePath = relative(
+      "page_styles",
+      toRunRelative(runId, localPath).replace(/\\/g, "/"),
+    ).replace(/\\/g, "/");
     const key = `${entry.family}::${entry.weight}::${entry.style}`;
     const existing = groups.get(key) ?? {
       family: entry.family,
@@ -1130,7 +1134,7 @@ function buildLocalFontCss(entries: StyleMdFontManifestEntry[], runId: string): 
       sources: [],
     };
     existing.sources.push({
-      path: toRunRelative(runId, localPath),
+      path: cssRelativePath,
       format: entry.format,
     });
     groups.set(key, existing);
