@@ -224,8 +224,8 @@ type ClaudeStyleguideQuery = (input: ClaudeStyleguideQueryInput) => Promise<stri
 const STYLEGUIDE_ALLOWED_TOOLS = ["Read", "Grep", "Glob", "LS"];
 const STYLEGUIDE_QUERY_TIMEOUT_MS = 600_000;
 const STYLEGUIDE_MAX_READ_BYTES = 350_000;
-const DEFAULT_SHOWCASE_REPAIR_PASSES = 40;
-const SHOWCASE_REPAIR_PASS_CAP = 120;
+const DEFAULT_SHOWCASE_REPAIR_PASSES = 6;
+const SHOWCASE_REPAIR_PASS_CAP = 12;
 
 const RAW_BLOCKLIST_PATTERNS = [
   ".raw.",
@@ -2420,8 +2420,8 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
 
     const configuredRepairPasses = getShowcaseRepairPassBudget();
     const maxRepairPasses = input.runClaudeQuery
-      ? Math.min(configuredRepairPasses, 6)
-      : configuredRepairPasses;
+      ? Math.min(configuredRepairPasses, 3)
+      : Math.min(configuredRepairPasses, 6);
 
     emitObservedStyleMdEvent(runId, {
       type: "stylemd_action",
