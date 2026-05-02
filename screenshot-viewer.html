@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>StyleMD Screenshot Viewer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 1000px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        input, select {
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            flex: 1;
+            min-width: 200px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        .checkbox-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            color: #555;
+            font-size: 14px;
+        }
+        
+        input[type="checkbox"] {
+            width: auto;
+            cursor: pointer;
+        }
+        
+        .status {
+            padding: 12px;
+            border-radius: 6px;
+            margin: 20px 0;
+            display: none;
+            font-size: 14px;
+        }
+        
+        .loading {
+            background: #e3f2fd;
+            color: #1976d2;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .loading::before {
+            content: '';
+            width: 16px;
+            height: 16px;
+            border: 2px solid #1976d2;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .error::before {
+            content: '⚠️';
+            font-size: 18px;
+        }
+        
+        .success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .success::before {
+            content: '✅';
+            font-size: 18px;
+        }
+        
+        .image-container {
+            margin: 30px 0;
+            display: none;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #f9f9f9;
+        }
+        
+        .image-container.show {
+            display: block;
+        }
+        
+        .image-header {
+            padding: 15px;
+            background: #f5f5f5;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .image-wrapper {
+            padding: 20px;
+            text-align: center;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .image-wrapper img {
+            max-width: 100%;
+            max-height: 600px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            display: block;
+            margin: 0 auto;
+        }
+        
+        .response-data {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+            display: none;
+            overflow-x: auto;
+        }
+        
+        .response-data.show {
+            display: block;
+        }
+        
+        .response-data code {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: #333;
+        }
+        
+        .info-box {
+            background: #f0f7ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            color: #1565c0;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 StyleMD Screenshot Viewer</h1>
+        <p class="subtitle">Get and display screenshots from URL analysis</p>
+        
+        <div class="info-box">
+            <strong>📌 Note:</strong> Screenshot is stored as base64 and displayed directly in the browser. If you don't see an image, check the browser console for errors.
+        </div>
+
+        <div class="input-group">
+            <input 
+                type="text" 
+                id="urlInput" 
+                placeholder="Enter URL (e.g., https://example.com)"
+                value="https://example.com"
+            >
+            <select id="provider">
+                <option value="kimi">Kimi Provider</option>
+                <option value="claude">Claude Provider</option>
+            </select>
+            <button onclick="fetchScreenshot()">Fetch Screenshot</button>
+        </div>
+
+        <div class="checkbox-group">
+            <label>
+                <input type="checkbox" id="useBackend">
+                Use Backend API (port 3002)
+            </label>
+            <label>
+                <input type="checkbox" id="showResponse">
+                Show Response Data
+            </label>
+        </div>
+
+        <div id="loadingStatus" class="status loading"></div>
+        <div id="errorStatus" class="status error"></div>
+        <div id="successStatus" class="status success"></div>
+
+        <div class="image-container" id="imageContainer">
+            <div class="image-header">📸 Screenshot</div>
+            <div class="image-wrapper">
+                <img id="screenshotImg" src="" alt="Screenshot" onerror="handleImageError()">
+            </div>
+        </div>
+
+        <div class="response-data" id="responseData">
+            <div style="font-weight: 600; margin-bottom: 10px; color: #333;">Response Data:</div>
+            <code id="responseContent"></code>
+        </div>
+    </div>
+
+    <script>
+        function showLoading(message = 'Processing...') {
+            document.getElementById('loadingStatus').textContent = message;
+            document.getElementById('loadingStatus').style.display = 'flex';
+            document.getElementById('errorStatus').style.display = 'none';
+            document.getElementById('successStatus').style.display = 'none';
+        }
+
+        function showError(message) {
+            document.getElementById('errorStatus').textContent = message;
+            document.getElementById('errorStatus').style.display = 'flex';
+            document.getElementById('loadingStatus').style.display = 'none';
+            document.getElementById('successStatus').style.display = 'none';
+        }
+
+        function showSuccess(message) {
+            document.getElementById('successStatus').textContent = message;
+            document.getElementById('successStatus').style.display = 'flex';
+            document.getElementById('loadingStatus').style.display = 'none';
+            document.getElementById('errorStatus').style.display = 'none';
+        }
+
+        function handleImageError() {
+            console.error('Image failed to load');
+            showError('Failed to load screenshot image. Check browser console for details.');
+        }
+
+        async function fetchScreenshot() {
+            const url = document.getElementById('urlInput').value.trim();
+            const provider = document.getElementById('provider').value;
+            const useBackend = document.getElementById('useBackend').checked;
+            const showResponse = document.getElementById('showResponse').checked;
+
+            if (!url) {
+                showError('Please enter a valid URL');
+                return;
+            }
+
+            // Hide image
+            document.getElementById('imageContainer').classList.remove('show');
+            document.getElementById('responseData').classList.remove('show');
+
+            showLoading('Processing your request... This may take a minute ⏳');
+
+            try {
+                const apiUrl = useBackend 
+                    ? 'http://localhost:3002/style-md'
+                    : 'http://localhost:3000/api/stylemd';
+                
+                console.log('📡 Fetching from:', apiUrl);
+                console.log('📝 URL:', url);
+                console.log('🔧 Provider:', provider);
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url, provider })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                console.log('✅ Response received:', data);
+
+                if (!data.ok) {
+                    showError(`API Error: ${data.error}`);
+                    return;
+                }
+
+                // Get screenshot from response
+                const screenshot = useBackend 
+                    ? data.data?.screenshot 
+                    : data.screenshot;
+
+                if (!screenshot) {
+                    showError('No screenshot in response');
+                    console.error('Response data:', data);
+                    return;
+                }
+
+                // Check if it's valid base64
+                if (!screenshot.startsWith('data:')) {
+                    showError('Invalid screenshot format. Expected data:image/...');
+                    console.error('Screenshot preview:', screenshot.substring(0, 100));
+                    return;
+                }
+
+                // Show response if requested
+                if (showResponse) {
+                    const dataToShow = useBackend 
+                        ? { ...data, data: { ...data.data, screenshot: data.data.screenshot.substring(0, 50) + '...' } }
+                        : { ...data, screenshot: data.screenshot.substring(0, 50) + '...' };
+                    
+                    document.getElementById('responseContent').textContent = JSON.stringify(dataToShow, null, 2);
+                    document.getElementById('responseData').classList.add('show');
+                }
+
+                // Load screenshot
+                const img = document.getElementById('screenshotImg');
+                img.src = screenshot;
+                
+                img.onload = () => {
+                    document.getElementById('imageContainer').classList.add('show');
+                    showSuccess(`Screenshot loaded successfully! (${(screenshot.length / 1024).toFixed(2)} KB)`);
+                };
+
+                img.onerror = () => {
+                    showError('Failed to load screenshot image');
+                };
+
+            } catch (error) {
+                console.error('Error:', error);
+                showError(`Error: ${error.message}`);
+            }
+        }
+
+        // Allow Enter to submit
+        document.getElementById('urlInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') fetchScreenshot();
+        });
+
+        // Load with default URL
+        console.log('🎨 StyleMD Screenshot Viewer loaded');
+        console.log('🚀 Ready to fetch screenshots');
+    </script>
+</body>
+</html>

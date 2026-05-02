@@ -982,6 +982,10 @@ async function validateShowcaseHtmlInSandbox(input: {
       viewport: { width: 1366, height: 900 },
       deviceScaleFactor: 1,
     });
+
+    await context.addInitScript(() => {
+      (window as any).__name = (t: any, v: any) => t;
+    });
     try {
       const page = await context.newPage();
       page.on("pageerror", (error) => {

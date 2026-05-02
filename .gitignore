@@ -4,6 +4,7 @@ out
 coverage
 .DS_Store
 .env.local
+.env
 .playground
 *.log
 npm-debug.log*
@@ -16,3 +17,6 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 .next
 out
+
+# Backend
+backend/dist

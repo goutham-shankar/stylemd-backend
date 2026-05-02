@@ -294,14 +294,16 @@ type RawImageData = {
 async function waitForSettledPage(page: Page, signal: AbortSignal): Promise<void> {
   assertNotAborted(signal);
 
-  await page.waitForLoadState("domcontentloaded", { timeout: 20_000 });
-  await page.waitForLoadState("load", { timeout: 15_000 }).catch(() => undefined);
-  await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => undefined);
+  await page.waitForLoadState("domcontentloaded", { timeout: 30_000 }).catch(() => undefined);
+  await page.waitForLoadState("load", { timeout: 30_000 }).catch(() => undefined);
+  await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => undefined);
   await page.waitForTimeout(400);
 
   assertNotAborted(signal);
 
   await page.evaluate(async () => {
+    // @ts-ignore
+    const __name = (t, v) => t;
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const waitForFonts = async (timeoutMs: number): Promise<void> => {
@@ -408,6 +410,8 @@ async function runOverlayHygiene(page: Page, signal: AbortSignal): Promise<void>
 
   await page.evaluate(
     ({ hideAttr, styleId, guardKey }) => {
+      // @ts-ignore
+      const __name = (t, v) => t;
       if (!document.getElementById(styleId)) {
         const style = document.createElement("style");
         style.id = styleId;
@@ -667,6 +671,8 @@ async function suppressStickyChromeForComponentScreenshot(
 
   await page.evaluate(
     ({ candidateId, hideAttr, styleId }) => {
+      // @ts-ignore
+      const __name = (t, v) => t;
       if (!document.getElementById(styleId)) {
         const style = document.createElement("style");
         style.id = styleId;
@@ -904,6 +910,8 @@ export async function runCaptureStage(input: {
   const viewport = page.viewportSize() ?? { width: 1366, height: 900 };
 
   const documentHeight = await page.evaluate(() => {
+    // @ts-ignore
+    const __name = (t, v) => t;
     return Math.max(
       document.body?.scrollHeight ?? 0,
       document.documentElement?.scrollHeight ?? 0,
@@ -1371,6 +1379,8 @@ async function collectPageStyles(input: {
   assertNotAborted(signal);
 
   const stylesMeta = await page.evaluate(() => {
+    // @ts-ignore
+    const __name = (t, v) => t;
     const inlineStyles = Array.from(document.querySelectorAll("style")).map((node, index) => ({
       id: `inline_${index + 1}`,
       text: node.textContent ?? "",
@@ -1538,6 +1548,8 @@ async function discoverCandidates(input: {
 
   const candidates = await page.evaluate(
     ({ tags, widthThresholdPct, minHeight }) => {
+      // @ts-ignore
+      const __name = (t, v) => t;
       function cssEscape(value: string): string {
         if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
           return CSS.escape(value);
@@ -1654,6 +1666,8 @@ async function discoverCandidates(input: {
 async function extractComponentPayload(page: Page, candidateId: string): Promise<ComponentExtractPayload> {
   return page.evaluate(
     ({ candidateId, styleTreeProperties, agentStyleProperties, pseudoCriticalProperties }) => {
+      // @ts-ignore
+      const __name = (t, v) => t;
       function styleObject(style: CSSStyleDeclaration): Record<string, string> {
         const output: Record<string, string> = {};
         for (let i = 0; i < style.length; i += 1) {
@@ -2194,6 +2208,8 @@ export async function runExtractStage(input: {
   }
 
   await page.evaluate(() => {
+    // @ts-ignore
+    const __name = (t, v) => t;
     for (const element of Array.from(document.querySelectorAll("[data-stylemd-candidate-id]"))) {
       element.removeAttribute("data-stylemd-candidate-id");
     }
@@ -2391,7 +2407,7 @@ export async function runCuratedResponsiveHoverEvidenceStage(input: {
     });
     await page.goto(url, {
       waitUntil: "domcontentloaded",
-      timeout: 45_000,
+      timeout: 90_000,
     });
     await runOverlayHygiene(page, signal);
 
