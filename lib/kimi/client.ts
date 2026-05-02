@@ -156,7 +156,6 @@ export class KimiClient {
     if (!this.apiKey) {
       throw new Error("KIMI_API_KEY or MOONSHOT_API_KEY environment variable not set");
     }
-    console.log(`🔑 [KIMI] Initialized (model: ${this.model}, baseURL: ${this.baseURL})`);
   }
 
   /**
@@ -168,7 +167,6 @@ export class KimiClient {
     workspaceDir: string,
   ): Promise<string> {
     const baseResolved = resolve(workspaceDir);
-    console.log(`🛠️  [KIMI] Executing tool: ${name}`, { args });
 
     switch (name) {
       case "Read":
@@ -364,62 +362,27 @@ export class KimiClient {
   ): Promise<{ text: string; tokenUsage: TokenUsage }> {
     const maxSteps = options?.maxSteps || 300;
     const messages: KimiMessage[] = [{ role: "user", content: userMessage }];
-
-    console.log(`🚀 [KIMI] Starting query with max ${maxSteps} tool steps (k2-thinking mode)`);
-    console.log(`📚 [KIMI] Available tools: ${tools.map((t) => t.function.name).join(", ")}`);
-
     const totalTokens = { input_tokens: 0, output_tokens: 0 };
     let stepCount = 0;
 
     while (stepCount < maxSteps) {
       stepCount++;
-      console.log(`\n⏳ [KIMI] Step ${stepCount}/${maxSteps}...`);
 
-      // Call Kimi API
       const response = await this.callAPI(systemPrompt, messages, tools);
       const { choices, usage } = response;
 
-      // DEBUG: Log response structure for debugging
       if (!choices || choices.length === 0) {
-        console.error(`⚠️  [KIMI] Unexpected API response structure:`);
-        console.error(`   Response keys: ${Object.keys(response).join(", ")}`);
-        console.error(`   Choices count: ${choices?.length ?? "undefined"}`);
-        console.error(`   Full response: ${JSON.stringify(response).slice(0, 500)}`);
+        console.error(`[KIMI] Unexpected API response: no choices. Keys: ${Object.keys(response).join(", ")}`);
       }
 
       totalTokens.input_tokens += usage.prompt_tokens;
       totalTokens.output_tokens += usage.completion_tokens;
       options?.onToken?.(totalTokens);
 
-      console.log(`💰 [KIMI] Tokens - Input: ${usage.prompt_tokens}, Output: ${usage.completion_tokens}`);
-      console.log(`📊 [KIMI] Cumulative - Input: ${totalTokens.input_tokens}, Output: ${totalTokens.output_tokens}`);
-
-      if (!choices[0]) {
-        console.log(`✅ [KIMI] No more choices, terminating`);
-        break;
-      }
+      if (!choices[0]) break;
 
       const assistantMessage = choices[0].message;
-
       const contentArray = normalizeAssistantContent(assistantMessage);
-
-      // DEBUG: Log the assistant message structure
-      console.log(`📨 [KIMI] Assistant message structure:`);
-      console.log(`   Content type: ${typeof assistantMessage.content}`);
-      console.log(`   Is array: ${Array.isArray(assistantMessage.content)}`);
-      if (assistantMessage.tool_calls?.length) {
-        console.log(`   Tool calls: ${assistantMessage.tool_calls.length}`);
-      }
-      if (typeof assistantMessage.content === "string") {
-        const stringContent = assistantMessage.content as string;
-        console.log(`   String length: ${stringContent.length}`);
-        console.log(`   Preview: ${stringContent.slice(0, 200)}`);
-      } else if (Array.isArray(assistantMessage.content)) {
-        const arrayContent = assistantMessage.content as Array<{ type?: string }>;
-        console.log(`   Array length: ${arrayContent.length}`);
-        console.log(`   Items: ${arrayContent.map((item) => item.type).join(", ")}`);
-      }
-
       const sanitizedContentArray = stripEmptyTextItems(contentArray);
       const assistantTextItems = sanitizedContentArray.filter((item) => item.type === "text");
 
@@ -439,9 +402,7 @@ export class KimiClient {
 
       for (const item of contentArray) {
         if (item.type === "text") {
-          // Final response text - only return if we have actual content
           if (choices[0].finish_reason === "stop" && item.text && item.text.trim()) {
-            console.log(`\n✨ [KIMI] Query complete (finish_reason: stop)`);
             return { text: item.text, tokenUsage: totalTokens };
           }
         } else if (item.type === "tool_use") {
@@ -449,56 +410,38 @@ export class KimiClient {
           const toolName = item.name || "";
           const toolInput = item.input || {};
 
-          console.log(`  → Tool call: ${toolName}`);
           options?.onToolCall?.(toolName, toolInput as Record<string, unknown>);
 
-          // Execute tool
           const toolResult = await this.executeTool(toolName, toolInput as Record<string, unknown>, workspaceDir);
           toolResults.push({
             type: "tool_result",
             tool_use_id: item.id || "",
             content: truncateForToolMessage(toolResult),
           });
-          console.log(`  ✓ Tool result: ${toolResult.slice(0, 100)}${toolResult.length > 100 ? "..." : ""}`);
         }
       }
 
       if (!hasToolUse || choices[0].finish_reason === "stop") {
-        // Extract final text from last assistant message
         const lastTextItem = contentArray.find((item) => item.type === "text");
         if (lastTextItem?.text && lastTextItem.text.trim()) {
           const responseText = lastTextItem.text.trim();
-          
-          // Check if response looks like JSON (starts with { or [)
-          // If not, treat as thinking/analysis and force JSON output
           const looksLikeJson = responseText.startsWith("{") || responseText.startsWith("[");
-          
+
           if (looksLikeJson) {
-            console.log(`\n✨ [KIMI] Query complete (no more tool calls)`);
             return { text: responseText, tokenUsage: totalTokens };
           }
-          
-          // Response is natural language (thinking/analysis), not JSON - force JSON output
+
+          // Response is natural language rather than JSON — prompt the model to emit JSON now.
           if (stepCount < maxSteps) {
-            console.log(`⚠️  [KIMI] Response is thinking/analysis, not JSON. Forcing JSON output...`);
             messages.push({
               role: "user",
               content: "{\"URGENT\": true, \"instruction\": \"Output ONLY valid JSON. No explanation. No thinking. JSON ONLY NOW.\", \"required_output\": {\"units\": [{\"type\": \"single\", \"component_id\": \"...\", \"study_label\": \"...\", \"reason\": \"...\"}]}}",
             });
-            continue; // Continue loop to get the JSON response
+            continue;
           }
         }
 
-        // DEBUGGING: No text found - log what we got instead
-        console.log(`⚠️  [KIMI] No text found in response. Content array:`);
-        console.log(`   Length: ${contentArray.length}`);
-        console.log(`   Items: ${contentArray.map((item) => `${item.type}${item.type === "text" ? `(len=${(item.text || "").length})` : ""}`).join(", ")}`);
-        console.log(`   Full content: ${JSON.stringify(contentArray).slice(0, 500)}`);
-        console.log(`   Finish reason: ${choices[0].finish_reason}`);
-        
-        // If we have no text and no tool use, force JSON output
         if (!hasToolUse && stepCount < maxSteps) {
-          console.log(`⚠️  [KIMI] Forcing JSON output with explicit schema...`);
           messages.push({
             role: "user",
             content: "{\"CRITICAL\": true, \"OUTPUT_NOW\": \"JSON_ONLY\", \"schema\": {\"units\": [{\"type\": \"single|merge\", \"component_id\": \"string\", \"component_ids\": [\"string\", \"string\"], \"study_label\": \"string\", \"reason\": \"string\"}]}}",
@@ -506,7 +449,6 @@ export class KimiClient {
           continue;
         }
 
-        console.log(`\n✨ [KIMI] Query complete (no text response)`);
         return { text: "", tokenUsage: totalTokens };
       }
 
@@ -523,7 +465,7 @@ export class KimiClient {
       }
     }
 
-    console.log(`\n⚠️  [KIMI] Query reached max steps (${maxSteps})`);
+    console.warn(`[KIMI] Query reached max steps (${maxSteps})`);
     return { text: "", tokenUsage: totalTokens };
   }
 
@@ -546,9 +488,6 @@ export class KimiClient {
       ...(tools.length > 0 && { tools }),
     };
 
-    console.log(`🚀 [KIMI] Sending request to: ${this.baseURL}/chat/completions`);
-    console.log(`📝 [KIMI] Request payload keys: ${Object.keys(payload).join(", ")}`);
-
     for (let attempt = 0; attempt <= this.maxApiRetries; attempt += 1) {
       let response: Response;
       try {
@@ -564,14 +503,11 @@ export class KimiClient {
         const message = error instanceof Error ? error.message : String(error);
         if (attempt < this.maxApiRetries) {
           const backoffMs = 1500 * (attempt + 1);
-          console.warn(`⚠️  [KIMI] Network error '${message}'. Retrying in ${backoffMs}ms (attempt ${attempt + 1}/${this.maxApiRetries})`);
           await sleep(backoffMs);
           continue;
         }
         throw new Error(`Kimi network error: ${message}`);
       }
-
-      console.log(`📊 [KIMI] Response status: ${response.status} ${response.statusText}`);
 
       if (response.ok) {
         return (await response.json()) as KimiResponse;
@@ -593,18 +529,16 @@ export class KimiClient {
 
       if (isRateLimit && isTpdExhausted) {
         const normalizedMessage = `Kimi rate limit reached (TPD exhausted): ${errorMessage}`;
-        console.error(`❌ [KIMI] ${normalizedMessage}`);
+        console.error(`[KIMI] ${normalizedMessage}`);
         throw new Error(normalizedMessage);
       }
 
       if (isRateLimit && attempt < this.maxApiRetries) {
         const backoffMs = 1500 * (attempt + 1);
-        console.warn(`⚠️  [KIMI] Rate-limited. Retrying in ${backoffMs}ms (attempt ${attempt + 1}/${this.maxApiRetries})`);
         await sleep(backoffMs);
         continue;
       }
 
-      console.error(`❌ [KIMI] API error: ${response.status} - ${errorText}`);
       throw new Error(`Kimi API error: ${response.status} - ${errorText}`);
     }
 

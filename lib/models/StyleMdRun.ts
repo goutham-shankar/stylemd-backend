@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 const StyleMdRunSchema = new mongoose.Schema({
   url: { type: String, required: true, unique: true, index: true },
+  slug: { type: String, unique: true, index: true },
   provider: { type: String, default: 'kimi' },
   model: { type: String },
   runId: { type: String },
