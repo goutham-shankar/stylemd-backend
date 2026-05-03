@@ -4,6 +4,7 @@ import { ScrapedData } from "@/backend/src/models/ScrapedData";
 import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import { stripLeadingModelPreamble } from "@/lib/services/styleMarkdownSanitize";
 import { scrape } from "@/backend/src/services/scraper";
+import { isValidScrapedRecord } from "@/backend/src/utils/validation";
 
 /**
  * Generate a URL-friendly slug from a URL (e.g. youtube.com → "youtube").
@@ -45,8 +46,7 @@ export type PersistStyleMdInput = {
 };
 
 /**
- * Record an artifact-pipeline run as soon as it starts so `GET /api/stylemd/by-slug/:runId`
- * can resolve the `runId` before the pipeline finishes (avoids 404 race with the frontend).
+ * Record an artifact-pipeline run as soon as it starts.
  */
 export async function markStyleMdRunPendingInMongo(input: {
   url: string;
@@ -66,7 +66,7 @@ export async function markStyleMdRunPendingInMongo(input: {
   const slug = existing?.slug?.trim() || (await ensureUniqueSlug(slugFromUrl(canonUrl)));
 
   const pending = {
-    url: canonUrl,
+    url: canonUrl, // Enforce canonical
     slug,
     runId: input.runId,
     provider: input.provider,
@@ -76,22 +76,16 @@ export async function markStyleMdRunPendingInMongo(input: {
     images: [],
   };
 
-  if (existing?._id) {
-    await StyleMdRun.updateOne({ _id: existing._id }, { $set: pending });
-    return;
-  }
-
+  // 🟠 FIX 4: ENSURE SINGLE WRITE PATH
   await StyleMdRun.updateOne(
     { url: canonUrl },
     { $set: pending, $setOnInsert: { createdAt: new Date() } },
-    { upsert: true },
+    { upsert: true }
   );
 }
 
 /**
  * Writes generated StyleMD to `stylemd_runs` and `scraped_data` (contentText).
- * Always updates the run row so `running` placeholders from {@link markStyleMdRunPendingInMongo} are cleared.
- * `scraped_data` is updated only when `styleMd` is non-empty.
  */
 export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput): Promise<{ slug: string }> {
   const canonUrl = canonicalPageUrl(input.url);
@@ -99,24 +93,16 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
   const styleMd = rawMd.trim();
   let screenshot = input.screenshot?.trim() ?? "";
 
-  // MongoDB 16MB document limit: avoid storing huge base64 strings
+  // MongoDB 16MB document limit
   if (screenshot.length > 5 * 1024 * 1024) {
-    console.warn(`[persistStyleMdAfterGeneration] Screenshot base64 is too large (${screenshot.length} bytes), dropping to prevent BSONObjectTooLarge error.`);
+    console.warn(`[persistStyleMdAfterGeneration] Screenshot base64 is too large, dropping.`);
     screenshot = "";
   }
 
   await connectMongo();
 
-  const existingSlug =
-    input.slug == null
-      ? (
-          await StyleMdRun.findOne({ url: { $in: pageUrlVariantsForLookup(canonUrl) } })
-            .select("slug")
-            .lean<{ slug?: string } | null>()
-        )?.slug?.trim() ?? ""
-      : "";
-
-  const slug = input.slug ?? (existingSlug || (await ensureUniqueSlug(slugFromUrl(canonUrl))));
+  const existing = await StyleMdRun.findOne({ url: { $in: pageUrlVariantsForLookup(canonUrl) } }).lean<{ slug?: string } | null>();
+  const slug = input.slug ?? (existing?.slug?.trim() || (await ensureUniqueSlug(slugFromUrl(canonUrl))));
   const now = new Date();
   const hasStyleMd = Boolean(styleMd);
   const hasScreenshot = Boolean(screenshot);
@@ -129,7 +115,7 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
         : "completed_with_warnings");
 
   const runData = {
-    url: canonUrl,
+    url: canonUrl, // Enforce canonical
     slug,
     runId: input.runId,
     provider: input.provider,
@@ -140,40 +126,19 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
     createdAt: now,
   };
 
-  try {
-    await StyleMdRun.create(runData);
-    console.log("[persistStyleMdAfterGeneration] Saved stylemd_runs", { runId: input.runId, slug, url: canonUrl });
-  } catch (dbErr: unknown) {
-    const code = typeof dbErr === "object" && dbErr !== null && "code" in dbErr ? (dbErr as { code?: number }).code : undefined;
-    if (code === 11000) {
-      const hit = await StyleMdRun.findOne({
-        url: { $in: pageUrlVariantsForLookup(canonUrl) },
-      }).lean<{ _id?: unknown } | null>();
-      if (hit?._id) {
-        await StyleMdRun.updateOne({ _id: hit._id }, { $set: runData });
-      } else {
-        await StyleMdRun.updateOne({ url: canonUrl }, { $set: runData });
-      }
-      console.log("[persistStyleMdAfterGeneration] Upserted stylemd_runs (duplicate key)", { url: canonUrl });
-    } else {
-      throw dbErr;
-    }
-  }
+  // 🟠 FIX 4: ENSURE SINGLE WRITE PATH
+  await StyleMdRun.updateOne(
+    { url: canonUrl },
+    { $set: runData, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true }
+  );
+  console.log("[persistStyleMdAfterGeneration] Persisted stylemd_runs (upsert)", { runId: input.runId, slug, url: canonUrl });
 
   if (hasStyleMd) {
-    const aliases = pageUrlVariantsForLookup(canonUrl);
-    const scrapedHit = await ScrapedData.findOne({ url: { $in: aliases } })
-      .sort({ createdAt: -1 })
-      .lean<{ _id?: unknown } | null>();
-    let scrapedData = null;
-    try {
-      scrapedData = await scrape(canonUrl);
-    } catch (err) {
-      console.error(`[ERROR] Failed to extract images/metadata via scrape during persist:`, err);
-    }
+    const scrapedData = await scrape(canonUrl);
 
     const scrapedPayload = { 
-      url: canonUrl, 
+      url: canonUrl, // Enforce canonical
       contentText: styleMd, 
       createdAt: now,
       ...(scrapedData ? {
@@ -181,32 +146,38 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
         description: scrapedData.description,
         h1: scrapedData.h1,
         canonical: scrapedData.canonical,
-        images: scrapedData.images, // scraper.ts already puts base64 screenshot in images[0]
+        images: scrapedData.images,
+        rawHtml: scrapedData.rawHtml,
       } : {
-        images: hasScreenshot ? [screenshot] : []
+        images: hasScreenshot ? [screenshot] : [],
+        rawHtml: ""
       })
     };
     
-    console.log(`[DB] Saving to MongoDB...`);
-    
-    if (scrapedHit?._id) {
-      await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: scrapedPayload });
-      console.log(`[DB] Saved successfully, _id: ${scrapedHit._id}`);
-    } else {
-      try {
-        const result = await ScrapedData.create(scrapedPayload);
-        console.log(`[DB] Saved successfully, _id: ${result._id}`);
-      } catch (again: unknown) {
-        const c2 =
-          typeof again === "object" && again !== null && "code" in again ?
-            (again as { code?: number }).code
-          : undefined;
-        if (c2 === 11000) {
-          const updated = await ScrapedData.findOneAndUpdate({ url: canonUrl }, { $set: scrapedPayload }, { new: true });
-          if (updated) console.log(`[DB] Saved successfully, _id: ${updated._id}`);
-        } else throw again;
-      }
+    // 🔴 FIX 1: REMOVE SILENT PERSISTENCE FAILURE
+    if (!isValidScrapedRecord(scrapedPayload)) {
+      console.error("[PERSIST] invalid scrape result, aborting", { url: canonUrl });
+      throw new Error("Scrape produced invalid data");
     }
+
+    console.log(`[DB] Saving to ScrapedData (upsert)...`);
+    
+    // 🟠 FIX 2: ENFORCE CANONICAL URL IN DB
+    // 🟠 FIX 4: ENSURE SINGLE WRITE PATH
+    await ScrapedData.updateOne(
+      { url: canonUrl },
+      { 
+        $set: { ...scrapedPayload, url: canonUrl },
+        $inc: { retryCount: 0 }, // Ensure field exists
+        $setOnInsert: { createdAt: new Date() } 
+      },
+      { upsert: true }
+    );
+    
+    // Reset retry count on successful write
+    await ScrapedData.updateOne({ url: canonUrl }, { $set: { retryCount: 0 } });
+    
+    console.log(`[DB] Saved ScrapedData successfully for ${canonUrl}`);
   }
 
   return { slug };

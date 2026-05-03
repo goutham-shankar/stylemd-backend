@@ -34,7 +34,7 @@ export async function connectMongo() {
       dbName: 'stylemd',
       serverSelectionTimeoutMS: 60000,
       socketTimeoutMS: 45000,
-      family: 4, // Use IPv4, skip trying IPv6
+      tls: true,
     }).then((mongoose) => {
       return mongoose;
     });

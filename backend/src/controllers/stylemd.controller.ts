@@ -9,9 +9,12 @@ import {
   persistStyleMdAfterGeneration,
   slugFromUrl,
 } from "@/lib/services/persistStyleMdMongo";
-import { pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
+import { pageUrlVariantsForLookup, canonicalPageUrl } from "@/lib/services/pageUrlCanonical";
 import { resolveStyleMdForRunDoc } from "@/lib/services/resolveStyleMdFromStores";
 import { StyleMdRun } from "../models/StyleMdRun";
+import { ScrapedData } from "../models/ScrapedData";
+
+import { isValidScrapedRecord } from "../utils/validation";
 
 interface StyleMdRunDoc {
   url: string;
@@ -23,6 +26,9 @@ interface StyleMdRunDoc {
   images?: string[];
   status?: string;
   createdAt?: Date;
+  retryCount?: number;
+  contentText?: string;
+  rawHtml?: string;
 }
 
 const requestSchema = z.object({
@@ -49,13 +55,20 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   res.setTimeout(0);
 
   try {
-    const { url, provider, screenshotUrl, screenshot } = requestSchema.parse(req.body);
+    const { url, provider } = requestSchema.parse(req.body);
     await connectMongo();
 
+    const canonUrl = canonicalPageUrl(url);
+    const urlAliases = pageUrlVariantsForLookup(canonUrl);
+
     // --- Cache hit (skip in-flight artifact runs and empty placeholders) ---
-    const urlAliases = pageUrlVariantsForLookup(url.trim());
     const existing = await StyleMdRun.findOne({ url: { $in: urlAliases } }).lean<StyleMdRunDoc>();
-    if (existing && existing.status !== "running" && existing.styleMd?.trim()) {
+    
+    // STRICT validity check: return cached only if valid
+    const isValid = existing && existing.status !== "running" && existing.styleMd?.trim() && isValidScrapedRecord(existing);
+
+    if (isValid) {
+      console.log(`[STYLEMD] cache-hit (valid) url=${canonUrl}`);
       res.json({
         ok: true,
         data: {
@@ -74,6 +87,36 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // 🔴 FIX 3: PREVENT INFINITE RE-SCRAPE LOOP
+    if (existing && !isValid && existing.status !== "running") {
+      const retries = existing.retryCount || 0;
+      if (retries >= 2) {
+        console.warn(`[STYLEMD] max retries reached for ${canonUrl}, returning last known data`);
+        res.json({
+          ok: true,
+          data: {
+            url: existing.url,
+            slug: existing.slug ?? slugFromUrl(existing.url),
+            runId: existing.runId,
+            styleMd: existing.styleMd,
+            images: existing.images ?? [],
+            provider: existing.provider,
+            model: existing.model,
+            status: existing.status,
+            createdAt: (existing.createdAt as Date)?.toISOString?.() ?? String(existing.createdAt),
+          },
+          cached: true,
+        });
+        return;
+      }
+      
+      // 🟠 FIX 6: ADD LOGGING FOR OVERWRITE
+      console.log(`[STYLEMD] invalid cache detected, re-scraping (attempt ${retries + 1}): ${canonUrl}`);
+      
+      // Increment retry count before re-scraping
+      await StyleMdRun.updateOne({ url: existing.url }, { $inc: { retryCount: 1 } });
+    }
+
     if (existing?.status === "running") {
       res.status(409).json({
         ok: false,
@@ -90,11 +133,11 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     }
 
     // --- Run the pipeline ---
-    const result = await runSimplifiedStyleMdPipeline(url, provider);
+    const result = await runSimplifiedStyleMdPipeline(canonUrl, provider);
 
-    const slugBase = await ensureUniqueSlug(slugFromUrl(url));
+    const slugBase = await ensureUniqueSlug(slugFromUrl(canonUrl));
     const persisted = await persistStyleMdAfterGeneration({
-      url,
+      url: canonUrl,
       runId: result.runId,
       provider,
       model: result.model,
@@ -103,13 +146,17 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       slug: slugBase,
       runStatus: result.styleMd?.trim() ? "completed" : "completed_with_warnings",
     });
+    
+    // Reset retry count on success
+    await StyleMdRun.updateOne({ url: canonUrl }, { $set: { retryCount: 0 } });
+    
     const slug = persisted?.slug ?? slugBase;
     const now = new Date();
 
     res.json({
       ok: true,
       data: {
-        url,
+        url: canonUrl,
         slug,
         runId: result.runId,
         provider,
@@ -129,14 +176,12 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** GET /api/stylemd/by-slug/:slug — retrieve a cached run by its human-readable slug or runId */
+/** GET /api/stylemd/by-slug/:slug */
 export async function getBySlug(req: Request, res: Response): Promise<void> {
   try {
     const { slug } = req.params as { slug: string };
     await connectMongo();
 
-    // Look up by slug first, then fall back to runId for backwards compat
-    // This supports: human-readable slugs (youtube), URL-safe slugs (youtube-2), and runIds (stylemd_1234567)
     const doc = await StyleMdRun.findOne({
       $or: [{ slug }, { runId: slug }],
     }).lean<StyleMdRunDoc>();
@@ -147,23 +192,7 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    console.log(`[getBySlug] Found run for slug/runId: ${slug}, runId: ${doc.runId}`);
     const styleMd = await resolveStyleMdForRunDoc(doc);
-
-    const shouldBackfillMongo =
-      styleMd.trim() !== "" &&
-      !(doc.styleMd?.trim()) &&
-      doc.status !== "running" &&
-      doc.runId?.trim();
-
-    if (shouldBackfillMongo) {
-      void StyleMdRun.updateOne(
-        { runId: doc.runId },
-        { $set: { styleMd } },
-      ).catch(() => {
-        /* read-path best effort */
-      });
-    }
 
     res.json({
       ok: true,
@@ -185,24 +214,14 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
   }
 }
 
-interface StyleMdRunSummary {
-  url: string;
-  slug?: string;
-  runId?: string;
-  provider?: string;
-  model?: string;
-  status?: string;
-  createdAt?: Date;
-}
-
-/** GET /api/stylemd/runs — list all completed StyleMD runs for the library */
+/** GET /api/stylemd/runs */
 export async function listStyleMdRuns(req: Request, res: Response): Promise<void> {
   try {
     await connectMongo();
     const runs = await StyleMdRun.find({})
       .sort({ createdAt: -1 })
       .select("url slug runId provider model status createdAt")
-      .lean<StyleMdRunSummary[]>();
+      .lean<StyleMdRunDoc[]>();
 
     res.json({
       ok: true,
@@ -216,7 +235,7 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
         createdAt: (r.createdAt as Date)?.toISOString?.() ?? String(r.createdAt),
       })),
     });
-} catch (err) {
+  } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
   }
 }

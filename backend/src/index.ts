@@ -23,7 +23,7 @@ async function start(): Promise<void> {
       dbName: config.mongoDbName,
       serverSelectionTimeoutMS: 60000,
       socketTimeoutMS: 45000,
-      family: 4,
+      tls: true,
     });
     console.log("[startup] connected to MongoDB");
   } catch (err) {
