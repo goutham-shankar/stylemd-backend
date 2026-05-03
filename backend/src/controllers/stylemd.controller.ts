@@ -8,6 +8,8 @@ import {
   persistStyleMdAfterGeneration,
   slugFromUrl,
 } from "@/lib/services/persistStyleMdMongo";
+import { pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
+import { resolveStyleMdForRunDoc } from "@/lib/services/resolveStyleMdFromStores";
 import { StyleMdRun } from "../models/StyleMdRun";
 
 interface StyleMdRunDoc {
@@ -51,7 +53,8 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     await connectMongo();
 
     // --- Cache hit (skip in-flight artifact runs and empty placeholders) ---
-    const existing = await StyleMdRun.findOne({ url }).lean<StyleMdRunDoc>();
+    const urlAliases = pageUrlVariantsForLookup(url.trim());
+    const existing = await StyleMdRun.findOne({ url: { $in: urlAliases } }).lean<StyleMdRunDoc>();
     if (existing && existing.status !== "running" && existing.styleMd?.trim()) {
       res.json({
         ok: true,
@@ -148,13 +151,30 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
     }
 
     console.log(`[getBySlug] Found run for slug/runId: ${slug}, runId: ${doc.runId}`);
+    const styleMd = await resolveStyleMdForRunDoc(doc);
+
+    const shouldBackfillMongo =
+      styleMd.trim() !== "" &&
+      !(doc.styleMd?.trim()) &&
+      doc.status !== "running" &&
+      doc.runId?.trim();
+
+    if (shouldBackfillMongo) {
+      void StyleMdRun.updateOne(
+        { runId: doc.runId },
+        { $set: { styleMd } },
+      ).catch(() => {
+        /* read-path best effort */
+      });
+    }
+
     res.json({
       ok: true,
       data: {
         url: doc.url,
         slug: doc.slug ?? slugFromUrl(doc.url),
         runId: doc.runId,
-        styleMd: doc.styleMd ?? "",
+        styleMd,
         screenshotUrl: doc.screenshotUrl ?? "",
         screenshot: doc.screenshot ?? "",
         provider: doc.provider,

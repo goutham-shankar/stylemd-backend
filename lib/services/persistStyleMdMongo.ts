@@ -1,6 +1,8 @@
 import { connectMongo } from "@/lib/mongodb";
 import { StyleMdRun } from "@/backend/src/models/StyleMdRun";
 import { ScrapedData } from "@/backend/src/models/ScrapedData";
+import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
+import { stripLeadingModelPreamble } from "@/lib/services/styleMarkdownSanitize";
 
 /**
  * Generate a URL-friendly slug from a URL (e.g. youtube.com → "youtube").
@@ -54,25 +56,35 @@ export async function markStyleMdRunPendingInMongo(input: {
 }): Promise<void> {
   await connectMongo();
 
-  const existing = await StyleMdRun.findOne({ url: input.url }).lean<{ slug?: string } | null>();
-  const slug = existing?.slug?.trim() || (await ensureUniqueSlug(slugFromUrl(input.url)));
+  const canonUrl = canonicalPageUrl(input.url);
+  const urlAliases = pageUrlVariantsForLookup(canonUrl);
+
+  const existing = await StyleMdRun.findOne({ url: { $in: urlAliases } }).lean<{
+    _id?: unknown;
+    slug?: string;
+  } | null>();
+  const slug = existing?.slug?.trim() || (await ensureUniqueSlug(slugFromUrl(canonUrl)));
+
+  const pending = {
+    url: canonUrl,
+    slug,
+    runId: input.runId,
+    provider: input.provider,
+    model: input.model,
+    status: "running",
+    styleMd: "",
+    screenshotUrl: "",
+    screenshot: "",
+  };
+
+  if (existing?._id) {
+    await StyleMdRun.updateOne({ _id: existing._id }, { $set: pending });
+    return;
+  }
 
   await StyleMdRun.updateOne(
-    { url: input.url },
-    {
-      $set: {
-        url: input.url,
-        slug,
-        runId: input.runId,
-        provider: input.provider,
-        model: input.model,
-        status: "running",
-        styleMd: "",
-        screenshotUrl: "",
-        screenshot: "",
-      },
-      $setOnInsert: { createdAt: new Date() },
-    },
+    { url: canonUrl },
+    { $set: pending, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
   );
 }
@@ -83,13 +95,15 @@ export async function markStyleMdRunPendingInMongo(input: {
  * `scraped_data` is updated only when `styleMd` is non-empty.
  */
 export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput): Promise<{ slug: string }> {
-  const styleMd = input.styleMd?.trim() ?? "";
+  const canonUrl = canonicalPageUrl(input.url);
+  const rawMd = stripLeadingModelPreamble(input.styleMd ?? "");
+  const styleMd = rawMd.trim();
   const screenshot = input.screenshot?.trim() ?? "";
   const screenshotUrl = input.screenshotUrl?.trim() ?? "";
 
   await connectMongo();
 
-  const slug = input.slug ?? (await ensureUniqueSlug(slugFromUrl(input.url)));
+  const slug = input.slug ?? (await ensureUniqueSlug(slugFromUrl(canonUrl)));
   const now = new Date();
   const hasStyleMd = Boolean(styleMd);
   const hasScreenshot = Boolean(screenshot) || Boolean(screenshotUrl);
@@ -102,7 +116,7 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
         : "completed_with_warnings");
 
   const runData = {
-    url: input.url,
+    url: canonUrl,
     slug,
     runId: input.runId,
     provider: input.provider,
@@ -116,27 +130,45 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
 
   try {
     await StyleMdRun.create(runData);
-    console.log("[persistStyleMdAfterGeneration] Saved stylemd_runs", { runId: input.runId, slug, url: input.url });
+    console.log("[persistStyleMdAfterGeneration] Saved stylemd_runs", { runId: input.runId, slug, url: canonUrl });
   } catch (dbErr: unknown) {
     const code = typeof dbErr === "object" && dbErr !== null && "code" in dbErr ? (dbErr as { code?: number }).code : undefined;
     if (code === 11000) {
-      await StyleMdRun.updateOne({ url: input.url }, { $set: runData });
-      console.log("[persistStyleMdAfterGeneration] Upserted stylemd_runs (duplicate key)", { url: input.url });
+      const hit = await StyleMdRun.findOne({
+        url: { $in: pageUrlVariantsForLookup(canonUrl) },
+      }).lean<{ _id?: unknown } | null>();
+      if (hit?._id) {
+        await StyleMdRun.updateOne({ _id: hit._id }, { $set: runData });
+      } else {
+        await StyleMdRun.updateOne({ url: canonUrl }, { $set: runData });
+      }
+      console.log("[persistStyleMdAfterGeneration] Upserted stylemd_runs (duplicate key)", { url: canonUrl });
     } else {
       throw dbErr;
     }
   }
 
   if (hasStyleMd) {
-    await ScrapedData.findOneAndUpdate(
-      { url: input.url },
-      {
-        url: input.url,
-        contentText: styleMd,
-        createdAt: now,
-      },
-      { upsert: true, new: true },
-    );
+    const aliases = pageUrlVariantsForLookup(canonUrl);
+    const scrapedHit = await ScrapedData.findOne({ url: { $in: aliases } })
+      .sort({ createdAt: -1 })
+      .lean<{ _id?: unknown } | null>();
+    const scrapedPayload = { url: canonUrl, contentText: styleMd, createdAt: now };
+    if (scrapedHit?._id) {
+      await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: scrapedPayload });
+    } else {
+      try {
+        await ScrapedData.create(scrapedPayload);
+      } catch (again: unknown) {
+        const c2 =
+          typeof again === "object" && again !== null && "code" in again ?
+            (again as { code?: number }).code
+          : undefined;
+        if (c2 === 11000) {
+          await ScrapedData.updateOne({ url: canonUrl }, { $set: { contentText: styleMd, createdAt: now } });
+        } else throw again;
+      }
+    }
   }
 
   return { slug };
