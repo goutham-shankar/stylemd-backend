@@ -431,29 +431,17 @@ async function runStyleMdArtifactsPipeline(runId, url, abortController, options 
             artifacts: (0, helpers_1.mergeArtifact)(state.artifacts, summaryArtifact),
         });
         await publishState();
-        await emitAndLog({
-            type: "stylemd_run_completed",
-            source: "system",
-            runId,
-            provider: runtime.provider,
-            model: runtime.model,
-            status: summary.status,
-            completedAt: summary.completedAt,
-            warnings: summary.warnings,
-            showcase: {
-                available: summary.showcase.available,
-                canonicalUrl: summary.showcase.canonicalUrl,
-                latestUrl: summary.showcase.latestUrl,
-            },
-        });
+        // Read styleMd and persist to DB BEFORE emitting the completed event so the
+        // frontend can use data.styleMd from the SSE payload and so that the first
+        // DB poll after the event already finds a completed record.
+        let styleMdContent = "";
         try {
             const styleMdPath = styleguideStageResult?.styleMdPath ?? (0, node_path_1.join)((0, artifacts_1.getStyleMdRunDir)(runId), "style.md");
-            let styleMdContent = "";
             try {
                 styleMdContent = await (0, promises_1.readFile)(styleMdPath, "utf-8");
             }
             catch {
-                styleMdContent = "";
+                styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
             }
             let screenshotUrlPath = `/styleguide-files/${runId}/full_screenshot.png`;
             let screenshotBase64 = "";
@@ -472,11 +460,28 @@ async function runStyleMdArtifactsPipeline(runId, url, abortController, options 
                 styleMd: styleMdContent,
                 screenshotUrl: screenshotUrlPath,
                 screenshot: screenshotBase64,
+                runStatus: summary.status,
             });
         }
         catch (dbErr) {
             console.warn(`[runStyleMdArtifactsPipeline] MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
         }
+        await emitAndLog({
+            type: "stylemd_run_completed",
+            source: "system",
+            runId,
+            provider: runtime.provider,
+            model: runtime.model,
+            status: summary.status,
+            completedAt: summary.completedAt,
+            styleMd: styleMdContent,
+            warnings: summary.warnings,
+            showcase: {
+                available: summary.showcase.available,
+                canonicalUrl: summary.showcase.canonicalUrl,
+                latestUrl: summary.showcase.latestUrl,
+            },
+        });
         return {
             ...summary,
             artifacts: state.artifacts,
@@ -521,6 +526,21 @@ async function runStyleMdArtifactsPipeline(runId, url, abortController, options 
                 latestUrl: summary.showcase.latestUrl,
             },
         });
+        try {
+            await (0, persistStyleMdMongo_1.persistStyleMdAfterGeneration)({
+                url,
+                runId,
+                provider: runtime.provider,
+                model: runtime.model,
+                styleMd: "",
+                screenshotUrl: "",
+                screenshot: "",
+                runStatus: summary.status,
+            });
+        }
+        catch (dbErr) {
+            console.warn(`[runStyleMdArtifactsPipeline] MongoDB persist (terminal state) failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+        }
         return summary;
     }
     finally {

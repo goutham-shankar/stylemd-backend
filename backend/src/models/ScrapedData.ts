@@ -9,6 +9,8 @@ const ScrapedSchema = new mongoose.Schema({
   images: { type: [String], default: [] },
   contentText: { type: String, default: null },
   rawHtml: { type: String, default: null },
+  screenshot: { type: String, default: null },
+  screenshotUrl: { type: String, default: null },
   createdAt: { type: Date, default: () => new Date() },
 }, { collection: "scraped_data" });
 

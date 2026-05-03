@@ -50,20 +50,36 @@ async function fetchWithTimeout(url, timeoutMs = 15000) {
     }
 }
 async function scrapeOnce(url) {
+    console.log(`[SCRAPER] Starting to scrape: ${url}`);
     const res = await fetchWithTimeout(url);
     if (!res.ok)
         throw new Error(`Fetch failed: ${res.status}`);
     const html = await res.text();
+    console.log(`[SCRAPER] Fetched HTML, length: ${html.length}`);
     const $ = cheerio.load(html);
-    const title = $("head > title").first().text().trim() || null;
+    const title = $("head > title").first().text().trim() || $('meta[property="og:title"]').attr("content") || null;
+    console.log(`[SCRAPER] Extracted title: ${title}`);
     const description = $('meta[name="description"]').attr("content") || $('meta[property="og:description"]').attr("content") || null;
+    console.log(`[SCRAPER] Extracted description: ${description?.slice(0, 100)}...`);
     const h1 = $("h1").first().text().trim() || null;
+    console.log(`[SCRAPER] Extracted h1: ${h1}`);
     const canonical = $('link[rel="canonical"]').attr("href") || null;
+    console.log(`[SCRAPER] Extracted canonical: ${canonical}`);
     const images = [];
     $("img").each((_i, el) => { const src = $(el).attr("src"); if (src)
         images.push(src); });
+    const ogImage = $('meta[property="og:image"]').attr("content");
+    if (ogImage)
+        images.push(ogImage);
+    const twitterImage = $('meta[name="twitter:image"]').attr("content");
+    if (twitterImage)
+        images.push(twitterImage);
+    console.log(`[SCRAPER] Found ${images.length} images:`, images.slice(0, 5));
     const contentText = $("body").text().replace(/\s+/g, " ").trim().slice(0, 20000);
-    return (0, normalize_1.normalize)({ url, title, description, h1, canonical, images, contentText, rawHtml: html });
+    console.log(`[SCRAPER] Extracted contentText, length: ${contentText.length}`);
+    const result = (0, normalize_1.normalize)({ url, title, description, h1, canonical, images, contentText, rawHtml: html });
+    console.log(`[SCRAPER] Normalized data, images count: ${result.images.length}`);
+    return result;
 }
 async function scrape(url, retries = 2, delayMs = 1000) {
     let attempt = 0;
@@ -74,9 +90,10 @@ async function scrape(url, retries = 2, delayMs = 1000) {
         catch (err) {
             attempt += 1;
             if (attempt > retries) {
-                console.error("[scraper] failed", err);
+                console.error("[SCRAPER] Failed after retries:", err);
                 return null;
             }
+            console.log(`[SCRAPER] Retry ${attempt}/${retries} after ${delayMs * attempt}ms...`);
             await new Promise((r) => setTimeout(r, delayMs * attempt));
         }
     }

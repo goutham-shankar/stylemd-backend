@@ -3,6 +3,7 @@ import { StyleMdRun } from "@/backend/src/models/StyleMdRun";
 import { ScrapedData } from "@/backend/src/models/ScrapedData";
 import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import { stripLeadingModelPreamble } from "@/lib/services/styleMarkdownSanitize";
+import { scrape } from "@/backend/src/services/scraper";
 
 /**
  * Generate a URL-friendly slug from a URL (e.g. youtube.com → "youtube").
@@ -98,8 +99,14 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
   const canonUrl = canonicalPageUrl(input.url);
   const rawMd = stripLeadingModelPreamble(input.styleMd ?? "");
   const styleMd = rawMd.trim();
-  const screenshot = input.screenshot?.trim() ?? "";
+  let screenshot = input.screenshot?.trim() ?? "";
   const screenshotUrl = input.screenshotUrl?.trim() ?? "";
+
+  // MongoDB 16MB document limit: avoid storing huge base64 strings
+  if (screenshot.length > 5 * 1024 * 1024) {
+    console.warn(`[persistStyleMdAfterGeneration] Screenshot base64 is too large (${screenshot.length} bytes), dropping to prevent BSONObjectTooLarge error.`);
+    screenshot = "";
+  }
 
   await connectMongo();
 
@@ -165,19 +172,43 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
     const scrapedHit = await ScrapedData.findOne({ url: { $in: aliases } })
       .sort({ createdAt: -1 })
       .lean<{ _id?: unknown } | null>();
-    const scrapedPayload = { url: canonUrl, contentText: styleMd, createdAt: now };
+    let scrapedData = null;
+    try {
+      scrapedData = await scrape(canonUrl);
+    } catch (err) {
+      console.error(`[ERROR] Failed to extract images/metadata via scrape during persist:`, err);
+    }
+
+    const scrapedPayload = { 
+      url: canonUrl, 
+      contentText: styleMd, 
+      createdAt: now,
+      ...(scrapedData ? {
+        title: scrapedData.title,
+        description: scrapedData.description,
+        h1: scrapedData.h1,
+        canonical: scrapedData.canonical,
+        images: scrapedData.images,
+      } : {})
+    };
+    
+    console.log(`[DB] Saving to MongoDB...`);
+    
     if (scrapedHit?._id) {
       await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: scrapedPayload });
+      console.log(`[DB] Saved successfully, _id: ${scrapedHit._id}`);
     } else {
       try {
-        await ScrapedData.create(scrapedPayload);
+        const result = await ScrapedData.create(scrapedPayload);
+        console.log(`[DB] Saved successfully, _id: ${result._id}`);
       } catch (again: unknown) {
         const c2 =
           typeof again === "object" && again !== null && "code" in again ?
             (again as { code?: number }).code
           : undefined;
         if (c2 === 11000) {
-          await ScrapedData.updateOne({ url: canonUrl }, { $set: { contentText: styleMd, createdAt: now } });
+          const updated = await ScrapedData.findOneAndUpdate({ url: canonUrl }, { $set: scrapedPayload }, { new: true });
+          if (updated) console.log(`[DB] Saved successfully, _id: ${updated._id}`);
         } else throw again;
       }
     }

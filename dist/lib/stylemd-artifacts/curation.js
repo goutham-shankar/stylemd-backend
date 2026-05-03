@@ -99,11 +99,14 @@ function getResultFailureDetail(message) {
     return "unknown error result";
 }
 function extractJsonCandidate(text) {
-    // Try fenced JSON blocks first
+    // Strip markdown code fences first - more robust approach
+    let cleaned = text.replace(/^```json\s*/i, "").replace(/```$/im, "");
+    cleaned = cleaned.replace(/^```\s*/i, "").replace(/```$/im, "");
+    cleaned = cleaned.replace(/^```\s*/i, "").replace(/```$/im, "");
+    // Try fenced JSON blocks
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (fenced?.[1]) {
         const candidate = fenced[1].trim();
-        // Validate that it has balanced braces
         if (hasBalancedBraces(candidate)) {
             return candidate;
         }

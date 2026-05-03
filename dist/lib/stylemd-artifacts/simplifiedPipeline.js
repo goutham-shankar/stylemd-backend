@@ -10,6 +10,7 @@ const stylemdSessionStore_1 = require("@/lib/store/stylemdSessionStore");
 const helpers_1 = require("@/lib/stylemd-artifacts/helpers");
 const stages_1 = require("@/lib/stylemd-artifacts/stages");
 const styleguide_1 = require("@/lib/stylemd-artifacts/styleguide");
+const persistStyleMdMongo_1 = require("@/lib/services/persistStyleMdMongo");
 const provider_1 = require("@/lib/stylemd-artifacts/provider");
 const types_1 = require("@/lib/stylemd-artifacts/types");
 function runId() {
@@ -50,6 +51,19 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
     const abortController = new AbortController();
     const signal = abortController.signal;
     const runtime = (0, provider_1.resolveStyleMdRuntimeConfig)(provider);
+    // Register the run as pending in MongoDB immediately so polling can resolve
+    // the runId before the pipeline finishes.
+    try {
+        await (0, persistStyleMdMongo_1.markStyleMdRunPendingInMongo)({
+            url,
+            runId: runIdValue,
+            provider: runtime.provider,
+            model: runtime.model,
+        });
+    }
+    catch (err) {
+        console.warn("[simplifiedPipeline] Failed to mark run pending in MongoDB:", err instanceof Error ? err.message : String(err));
+    }
     const config = mergeConfig({});
     let state = (0, helpers_1.createInitialRunState)(runIdValue, url, runtime.provider, runtime.model);
     async function emitAndLog(event) {
@@ -344,15 +358,13 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
         try {
             const screenshotPath = (0, node_path_1.join)((0, artifacts_1.getStyleMdRunDir)(runIdValue), "full_screenshot.png");
             screenshotUrlPath = `/styleguide-files/${runIdValue}/full_screenshot.png`;
-            // Convert screenshot to base64
             screenshotBase64 = await (0, fileToBase64_1.fileToBase64)(screenshotPath, "image/png");
             console.log(`[SIMPLE PIPELINE] Screenshot saved as base64 (size: ${screenshotBase64.length} bytes)`);
         }
         catch (err) {
             screenshotUrlPath = "";
             screenshotBase64 = "";
-            const errMsg = err instanceof Error ? err.message : String(err);
-            console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${errMsg}`);
+            console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${err instanceof Error ? err.message : String(err)}`);
         }
         const summary = {
             runId: runIdValue,
@@ -383,6 +395,24 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
             artifacts: (0, helpers_1.mergeArtifact)(state.artifacts, summaryArtifact),
         });
         await publishState();
+        // Persist to MongoDB BEFORE emitting the completed event so the frontend
+        // can use data.styleMd from the SSE payload and the first DB poll already
+        // finds a completed record.
+        try {
+            await (0, persistStyleMdMongo_1.persistStyleMdAfterGeneration)({
+                url,
+                runId: runIdValue,
+                provider: runtime.provider,
+                model: runtime.model,
+                styleMd: styleMdContent,
+                screenshotUrl: screenshotUrlPath,
+                screenshot: screenshotBase64,
+                runStatus: summary.status,
+            });
+        }
+        catch (dbErr) {
+            console.warn(`[simplifiedPipeline] MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+        }
         await emitAndLog({
             type: "stylemd_run_completed",
             source: "system",
@@ -391,7 +421,13 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
             model: runtime.model,
             status: summary.status,
             completedAt: summary.completedAt,
+            styleMd: styleMdContent,
             warnings: summary.warnings,
+            showcase: {
+                available: false,
+                canonicalUrl: "",
+                latestUrl: "",
+            },
         });
         return {
             runId: runIdValue,

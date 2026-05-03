@@ -2,6 +2,11 @@ import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { readFile } from "node:fs/promises";
 import { fileToBase64 } from "@/lib/utils/fileToBase64";
+import sharp from "sharp";
+import { connectMongo } from "@/lib/mongodb";
+import { StyleMdRun } from "@/backend/src/models/StyleMdRun";
+import { ScrapedData } from "@/backend/src/models/ScrapedData";
+import { pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import {
   appendStyleMdLogLine,
   getStyleMdRunDir,
@@ -306,6 +311,44 @@ export async function runSimplifiedStyleMdPipeline(
 
       registerArtifacts(capture.artifacts);
       await publishState();
+
+      // --- Save screenshot to MongoDB immediately after capture ---
+      try {
+        console.log(`[SCREENSHOT] Compressing screenshot for DB storage...`);
+        const rawBuffer = await readFile(fullScreenshotPath);
+        const compressedBuffer = await sharp(rawBuffer)
+          .resize({ width: 900, withoutEnlargement: true })
+          .png({ compressionLevel: 9 })
+          .toBuffer();
+        const screenshotBase64 = `data:image/png;base64,${compressedBuffer.toString("base64")}`;
+        const screenshotUrl = `/styleguide-files/${runIdValue}/full_screenshot.png`;
+        console.log(`[SCREENSHOT] Compressed to ${compressedBuffer.length} bytes (base64 length: ${screenshotBase64.length}). Saving to MongoDB...`);
+
+        await connectMongo();
+        const canonUrl = new URL(url).href;
+        const urlVariants = pageUrlVariantsForLookup(canonUrl);
+
+        // Update StyleMdRun with screenshot
+        await StyleMdRun.updateOne(
+          { $or: [{ runId: runIdValue }, { url: { $in: urlVariants } }] },
+          { $set: { screenshot: screenshotBase64, screenshotUrl } },
+        );
+
+        // Update or upsert ScrapedData with screenshot
+        const scrapedHit = await ScrapedData.findOne({ url: { $in: urlVariants } }).lean<{ _id?: unknown } | null>();
+        if (scrapedHit?._id) {
+          await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: { screenshot: screenshotBase64, screenshotUrl } });
+        } else {
+          await ScrapedData.updateOne(
+            { url: canonUrl },
+            { $set: { screenshot: screenshotBase64, screenshotUrl, url: canonUrl }, $setOnInsert: { createdAt: new Date() } },
+            { upsert: true },
+          );
+        }
+        console.log(`[SCREENSHOT] ✅ Screenshot saved to MongoDB for runId: ${runIdValue}`);
+      } catch (ssErr) {
+        console.warn(`[SCREENSHOT] ⚠️ Failed to save screenshot to DB: ${ssErr instanceof Error ? ssErr.message : String(ssErr)}`);
+      }
     });
 
     const extract = await runStage("extract", async () => {
@@ -449,16 +492,14 @@ export async function runSimplifiedStyleMdPipeline(
     }
 
     let screenshotUrlPath = "";
-    let screenshotBase64 = "";
+    const screenshotBase64 = "";
     try {
       const screenshotPath = join(getStyleMdRunDir(runIdValue), "full_screenshot.png");
       screenshotUrlPath = `/styleguide-files/${runIdValue}/full_screenshot.png`;
-      screenshotBase64 = await fileToBase64(screenshotPath, "image/png");
-      console.log(`[SIMPLE PIPELINE] Screenshot saved as base64 (size: ${screenshotBase64.length} bytes)`);
+      console.log(`[SIMPLE PIPELINE] Screenshot saved to ${screenshotPath}, URL: ${screenshotUrlPath}`);
     } catch (err) {
       screenshotUrlPath = "";
-      screenshotBase64 = "";
-      console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[SIMPLE PIPELINE] Failed to resolve screenshot URL: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const summary: StyleMdRunSummary = {

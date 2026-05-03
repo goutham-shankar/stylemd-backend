@@ -9,6 +9,8 @@ const provider_1 = require("@/lib/stylemd-artifacts/provider");
 const simplifiedPipeline_1 = require("@/lib/stylemd-artifacts/simplifiedPipeline");
 const mongodb_1 = require("@/lib/mongodb");
 const persistStyleMdMongo_1 = require("@/lib/services/persistStyleMdMongo");
+const pageUrlCanonical_1 = require("@/lib/services/pageUrlCanonical");
+const resolveStyleMdFromStores_1 = require("@/lib/services/resolveStyleMdFromStores");
 const StyleMdRun_1 = require("../models/StyleMdRun");
 const requestSchema = zod_1.z.object({
     url: zod_1.z.string().url(),
@@ -35,7 +37,8 @@ async function runStyleMd(req, res) {
         const { url, provider } = requestSchema.parse(req.body);
         await (0, mongodb_1.connectMongo)();
         // --- Cache hit (skip in-flight artifact runs and empty placeholders) ---
-        const existing = await StyleMdRun_1.StyleMdRun.findOne({ url }).lean();
+        const urlAliases = (0, pageUrlCanonical_1.pageUrlVariantsForLookup)(url.trim());
+        const existing = await StyleMdRun_1.StyleMdRun.findOne({ url: { $in: urlAliases } }).lean();
         if (existing && existing.status !== "running" && existing.styleMd?.trim()) {
             res.json({
                 ok: true,
@@ -80,6 +83,7 @@ async function runStyleMd(req, res) {
             screenshotUrl: result.screenshotUrl,
             screenshot: result.screenshot,
             slug: slugBase,
+            runStatus: result.styleMd?.trim() ? "completed" : "completed_with_warnings",
         });
         const slug = persisted?.slug ?? slugBase;
         const now = new Date();
@@ -123,13 +127,23 @@ async function getBySlug(req, res) {
             return;
         }
         console.log(`[getBySlug] Found run for slug/runId: ${slug}, runId: ${doc.runId}`);
+        const styleMd = await (0, resolveStyleMdFromStores_1.resolveStyleMdForRunDoc)(doc);
+        const shouldBackfillMongo = styleMd.trim() !== "" &&
+            !(doc.styleMd?.trim()) &&
+            doc.status !== "running" &&
+            doc.runId?.trim();
+        if (shouldBackfillMongo) {
+            void StyleMdRun_1.StyleMdRun.updateOne({ runId: doc.runId }, { $set: { styleMd } }).catch(() => {
+                /* read-path best effort */
+            });
+        }
         res.json({
             ok: true,
             data: {
                 url: doc.url,
                 slug: doc.slug ?? (0, persistStyleMdMongo_1.slugFromUrl)(doc.url),
                 runId: doc.runId,
-                styleMd: doc.styleMd ?? "",
+                styleMd,
                 screenshotUrl: doc.screenshotUrl ?? "",
                 screenshot: doc.screenshot ?? "",
                 provider: doc.provider,

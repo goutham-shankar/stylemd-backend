@@ -49,7 +49,7 @@ async function getArtifact(req, res) {
             return;
         }
         if (IMAGE_EXTENSIONS.has(ext)) {
-            const rawUrl = `/api/stylemd-artifacts/artifact?runId=${encodeURIComponent(parsed.runId)}&path=${encodeURIComponent(artifactPath)}&mode=raw`;
+            const rawUrl = `/api/stylemd-artifacts/artifact?runId=${encodeURIComponent(parsed.runId)}&path=${encodeURIComponent(parsed.path)}&mode=raw`;
             res.json({ ok: true, previewType: "image", rawUrl, mimeType });
             return;
         }

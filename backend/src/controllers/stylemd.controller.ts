@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { readFile } from "fs/promises";
 import { validateStyleMdProviderCredentials } from "@/lib/stylemd-artifacts/provider";
 import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
 import { connectMongo } from "@/lib/mongodb";
@@ -28,6 +29,8 @@ interface StyleMdRunDoc {
 const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
+  screenshotUrl: z.string().url().optional(),
+  screenshot: z.string().optional(),
 });
 
 export async function clearCache(_req: Request, res: Response): Promise<void> {
@@ -49,7 +52,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   res.setTimeout(0);
 
   try {
-    const { url, provider } = requestSchema.parse(req.body);
+    const { url, provider, screenshotUrl, screenshot } = requestSchema.parse(req.body);
     await connectMongo();
 
     // --- Cache hit (skip in-flight artifact runs and empty placeholders) ---
@@ -91,7 +94,12 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     }
 
     // --- Run the pipeline ---
+    const userProvidedScreenshotUrl = screenshotUrl;
+    const userProvidedScreenshot = screenshot;
     const result = await runSimplifiedStyleMdPipeline(url, provider);
+
+    const usedScreenshotUrl = userProvidedScreenshotUrl || result.screenshotUrl;
+    const usedScreenshot = userProvidedScreenshot || result.screenshot;
 
     const slugBase = await ensureUniqueSlug(slugFromUrl(url));
     const persisted = await persistStyleMdAfterGeneration({
@@ -100,8 +108,8 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       provider,
       model: result.model,
       styleMd: result.styleMd,
-      screenshotUrl: result.screenshotUrl,
-      screenshot: result.screenshot,
+      screenshotUrl: usedScreenshotUrl,
+      screenshot: usedScreenshot,
       slug: slugBase,
       runStatus: result.styleMd?.trim() ? "completed" : "completed_with_warnings",
     });
@@ -117,8 +125,8 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
         provider,
         model: result.model,
         styleMd: result.styleMd,
-        screenshotUrl: result.screenshotUrl,
-        screenshot: result.screenshot,
+        screenshotUrl: usedScreenshotUrl,
+        screenshot: usedScreenshot,
         status: "completed",
         createdAt: now.toISOString(),
       },
@@ -220,7 +228,26 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
         createdAt: (r.createdAt as Date)?.toISOString?.() ?? String(r.createdAt),
       })),
     });
+} catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
+  }
+}
+
+export async function fetchImageAsBase64(req: Request, res: Response): Promise<void> {
+  try {
+    const { path: filePath } = req.body as { path: string };
+    if (!filePath) {
+      res.status(400).json({ ok: false, error: "Missing path" });
+      return;
+    }
+
+    const buffer = await readFile(filePath);
+    const base64 = buffer.toString("base64");
+    const ext = filePath.toLowerCase().endsWith(".png") ? "png" : "jpeg";
+    const mimeType = ext === "png" ? "image/png" : "image/jpeg";
+
+    res.json({ ok: true, data: `data:${mimeType};base64,${base64}` });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
   }
 }
