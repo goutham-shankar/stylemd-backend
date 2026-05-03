@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { z } from "zod";
 import { scrape } from "../services/scraper";
 import { ScrapedData } from "../models/ScrapedData";
-import { connectMongo } from "@/lib/mongodb";
+import { connectDB, safeWrite } from "@/lib/mongodb";
 import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import { isValidScrapedRecord } from "../utils/validation";
 
@@ -15,13 +15,20 @@ const postSchema = z.object({
 
 export async function createScrapedData(req: Request, res: Response): Promise<void> {
   try {
-    const { url } = postSchema.parse(req.body);
+    // 🟡 FIX 7: OPTIONAL SAFETY FOR SCRAPE ENDPOINT
+    const { url } = req.body as { url?: string };
+    if (!url || typeof url !== "string") {
+      res.status(400).json({ ok: false, error: "Invalid or missing URL" });
+      return;
+    }
+
+    postSchema.parse({ url });
     
     // 2. Normalize URL (Strip query params and hashes via canonicalPageUrl)
     const urlNormalized = canonicalPageUrl(url);
     console.log(`[SCRAPE] start url=${urlNormalized}`);
 
-    await connectMongo();
+
 
     // 3. Check MongoDB: Use pageUrlVariantsForLookup to catch all variants
     const variants = pageUrlVariantsForLookup(urlNormalized);
@@ -52,7 +59,7 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
       console.log(`[SCRAPE] overwriting invalid record (attempt ${retries + 1}): ${urlNormalized}`);
       
       // Increment retry count before re-scraping to prevent race loops
-      await ScrapedData.updateOne({ url: existing.url }, { $inc: { retryCount: 1 } });
+      await safeWrite(() => ScrapedData.updateOne({ url: existing.url }, { $inc: { retryCount: 1 } }));
     }
 
     // 4. Else: Run scraper (Playwright)
@@ -79,10 +86,12 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
       createdAt: new Date(),
     };
 
-    await ScrapedData.updateOne(
-      { url: urlNormalized },
-      { $set: payload },
-      { upsert: true }
+    await safeWrite(() =>
+      ScrapedData.updateOne(
+        { url: urlNormalized },
+        { $set: payload },
+        { upsert: true }
+      )
     );
 
     const doc = await ScrapedData.findOne({ url: urlNormalized }).lean();
@@ -93,13 +102,29 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
     res.status(201).json({ ok: true, data: doc });
   } catch (err) {
     console.log(`[SCRAPE] error url=${req.body?.url ?? "unknown"}`);
-    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    const status = err instanceof z.ZodError ? 400 : 500;
+    res.status(status).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 }
 
-export async function listScrapedData(_req: Request, res: Response): Promise<void> {
+export async function listScrapedData(req: Request, res: Response): Promise<void> {
   try {
-    await connectMongo();
+    const { url } = req.query as { url?: string };
+
+
+    if (url) {
+      // 🔴 FIX 1: CANONICALIZATION IN GET HANDLER
+      const variants = pageUrlVariantsForLookup(canonicalPageUrl(url));
+      const doc = await ScrapedData.findOne({ url: { $in: variants } }).lean();
+      if (doc) {
+        res.json({ ok: true, data: doc });
+        return;
+      }
+      // 🔴 FIX 2: REMOVE HARD 404 IN GET
+      res.json({ ok: true, data: null });
+      return;
+    }
+
     const data = await ScrapedData.find({}, { rawHtml: 0 }).sort({ createdAt: -1 }).limit(100).lean();
     res.json({ ok: true, data });
   } catch (err) {

@@ -10,22 +10,16 @@ dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local") });
 
 import mongoose from "mongoose";
+import { connectDB } from "../../lib/mongodb";
 import { createApp } from "./app";
 import { config } from "./config/env";
 
 async function start(): Promise<void> {
   console.log(`[startup] booting StyleMD standalone backend on port ${config.port}`);
   console.log(`[startup] environment: ${config.nodeEnv}`);
-  console.log(`[startup] connecting to MongoDB dbName=${config.mongoDbName}`);
 
   try {
-    await mongoose.connect(config.mongoUri, {
-      dbName: config.mongoDbName,
-      serverSelectionTimeoutMS: 60000,
-      socketTimeoutMS: 45000,
-      tls: true,
-    });
-    console.log("[startup] connected to MongoDB");
+    await connectDB();
   } catch (err) {
     console.error("[startup] failed to connect to MongoDB", err);
     process.exit(1);

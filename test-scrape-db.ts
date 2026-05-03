@@ -7,7 +7,10 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 dotenv.config({ path: "backend/.env.local" });
 
+import { connectDB } from "./lib/mongodb";
+
 async function run() {
+  await connectDB();
   console.log("=== Testing Pipeline Storage ===");
   
   // 1. Run the storage pipeline. This will internally trigger the scraper.

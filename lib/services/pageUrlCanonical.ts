@@ -1,4 +1,3 @@
-import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 
 /**
  * Canonical page URL + lookup variants so `https://a.com/` and `https://www.a.com` resolve to the same row.

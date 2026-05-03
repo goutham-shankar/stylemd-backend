@@ -13,9 +13,16 @@ const ScrapedSchema = new mongoose.Schema(
     h1:          { type: String, default: null },
     canonical:   { type: String, default: null },
     images:      { type: [String], default: [] },
+    brandAssets: {
+      logo: { type: String },
+      favicon: { type: String },
+      appleIcon: { type: String },
+      ogImage: { type: String }
+    },
     contentText: { type: String, default: null },
     rawHtml:     { type: String, default: null },
     createdAt:   { type: Date, default: () => new Date() },
+    updatedAt:   { type: Date, default: () => new Date() },
   },
   { collection: "scraped_data" },
 );

@@ -3,10 +3,8 @@ import { z } from "zod";
 import { readFile } from "fs/promises";
 import { validateStyleMdProviderCredentials } from "@/lib/stylemd-artifacts/provider";
 import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
-import { connectMongo } from "@/lib/mongodb";
+import { connectDB, safeWrite } from "@/lib/mongodb";
 import {
-  ensureUniqueSlug,
-  persistStyleMdAfterGeneration,
   slugFromUrl,
 } from "@/lib/services/persistStyleMdMongo";
 import { pageUrlVariantsForLookup, canonicalPageUrl } from "@/lib/services/pageUrlCanonical";
@@ -38,9 +36,8 @@ const requestSchema = z.object({
 
 export async function clearCache(_req: Request, res: Response): Promise<void> {
   try {
-    await connectMongo();
-    await StyleMdRun.deleteMany({});
-    res.json({ ok: true, message: "Cache cleared" });
+    await safeWrite(() => StyleMdRun.deleteMany({}));
+    res.json({ ok: true, data: { message: "Cache cleared" } });
   } catch (err) {
     res
       .status(500)
@@ -49,31 +46,29 @@ export async function clearCache(_req: Request, res: Response): Promise<void> {
 }
 
 export async function runStyleMd(req: Request, res: Response): Promise<void> {
-  // The pipeline can run for 5–10 minutes. Disable the default socket timeout
-  // for this specific request so the connection stays open until completion.
   req.socket.setTimeout(0);
   res.setTimeout(0);
 
   try {
     const { url, provider } = requestSchema.parse(req.body);
-    await connectMongo();
-
     const canonUrl = canonicalPageUrl(url);
-    const urlAliases = pageUrlVariantsForLookup(canonUrl);
+    const slug = slugFromUrl(canonUrl);
 
-    // --- Cache hit (skip in-flight artifact runs and empty placeholders) ---
-    const existing = await StyleMdRun.findOne({ url: { $in: urlAliases } }).lean<StyleMdRunDoc>();
+    // --- Cache hit (find LATEST run for this slug) ---
+    const existing = await StyleMdRun.findOne({ slug })
+      .sort({ createdAt: -1 })
+      .lean<StyleMdRunDoc>();
     
     // STRICT validity check: return cached only if valid
     const isValid = existing && existing.status !== "running" && existing.styleMd?.trim() && isValidScrapedRecord(existing);
 
     if (isValid) {
-      console.log(`[STYLEMD] cache-hit (valid) url=${canonUrl}`);
+      console.log(`[STYLEMD] cache-hit (valid) slug=${slug}`);
       res.json({
         ok: true,
         data: {
           url: existing.url,
-          slug: existing.slug ?? slugFromUrl(existing.url),
+          slug: existing.slug,
           runId: existing.runId,
           styleMd: existing.styleMd,
           images: existing.images ?? [],
@@ -87,16 +82,15 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // 🔴 FIX 3: PREVENT INFINITE RE-SCRAPE LOOP
     if (existing && !isValid && existing.status !== "running") {
       const retries = existing.retryCount || 0;
       if (retries >= 2) {
-        console.warn(`[STYLEMD] max retries reached for ${canonUrl}, returning last known data`);
+        console.warn(`[STYLEMD] max retries reached for ${slug}, returning last known data`);
         res.json({
           ok: true,
           data: {
             url: existing.url,
-            slug: existing.slug ?? slugFromUrl(existing.url),
+            slug: existing.slug,
             runId: existing.runId,
             styleMd: existing.styleMd,
             images: existing.images ?? [],
@@ -110,17 +104,14 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
         return;
       }
       
-      // 🟠 FIX 6: ADD LOGGING FOR OVERWRITE
-      console.log(`[STYLEMD] invalid cache detected, re-scraping (attempt ${retries + 1}): ${canonUrl}`);
-      
-      // Increment retry count before re-scraping
-      await StyleMdRun.updateOne({ url: existing.url }, { $inc: { retryCount: 1 } });
+      console.log(`[STYLEMD] invalid cache detected, re-scraping (attempt ${retries + 1}): ${slug}`);
+      await safeWrite(() => StyleMdRun.updateOne({ runId: existing.runId }, { $inc: { retryCount: 1 } }));
     }
 
     if (existing?.status === "running") {
       res.status(409).json({
         ok: false,
-        error: "A StyleMD run is already in progress for this URL. Wait for it to finish or use the artifact pipeline status API.",
+        error: "A StyleMD run is already in progress for this website. Wait for it to finish.",
       });
       return;
     }
@@ -133,24 +124,12 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     }
 
     // --- Run the pipeline ---
+    // The pipeline now handles its own persistence into MongoDB.
     const result = await runSimplifiedStyleMdPipeline(canonUrl, provider);
 
-    const slugBase = await ensureUniqueSlug(slugFromUrl(canonUrl));
-    const persisted = await persistStyleMdAfterGeneration({
-      url: canonUrl,
-      runId: result.runId,
-      provider,
-      model: result.model,
-      styleMd: result.styleMd,
-      screenshot: result.screenshot,
-      slug: slugBase,
-      runStatus: result.styleMd?.trim() ? "completed" : "completed_with_warnings",
-    });
+    // Reset retry count on success (keyed by runId)
+    await safeWrite(() => StyleMdRun.updateOne({ runId: result.runId }, { $set: { retryCount: 0 } }));
     
-    // Reset retry count on success
-    await StyleMdRun.updateOne({ url: canonUrl }, { $set: { retryCount: 0 } });
-    
-    const slug = persisted?.slug ?? slugBase;
     const now = new Date();
 
     res.json({
@@ -180,14 +159,26 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
 export async function getBySlug(req: Request, res: Response): Promise<void> {
   try {
     const { slug } = req.params as { slug: string };
-    await connectMongo();
 
+    // 🔴 FETCH LATEST RUN BY SLUG (or specific runId)
+    // We check:
+    // 1. Exact slug match
+    // 2. Exact runId match
+    // 3. Normalized slug match (in case frontend passes full hostname)
+    const normalizedSlug = slugFromUrl(slug.includes(".") ? `https://${slug}` : slug);
+    
     const doc = await StyleMdRun.findOne({
-      $or: [{ slug }, { runId: slug }],
-    }).lean<StyleMdRunDoc>();
+      $or: [
+        { slug }, 
+        { runId: slug },
+        { slug: normalizedSlug }
+      ],
+    })
+    .sort({ createdAt: -1 })
+    .lean<StyleMdRunDoc>();
 
     if (!doc) {
-      console.warn(`[getBySlug] No run found for slug/runId: ${slug}`);
+      console.warn(`[getBySlug] No run found for slug/runId/normalized: ${slug} / ${normalizedSlug}`);
       res.status(404).json({ ok: false, error: `No run found for slug: ${slug}` });
       return;
     }
@@ -198,10 +189,16 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
       ok: true,
       data: {
         url: doc.url,
-        slug: doc.slug ?? slugFromUrl(doc.url),
+        slug: doc.slug,
         runId: doc.runId,
         styleMd,
         images: doc.images ?? [],
+        title: (doc as any).title,
+        description: (doc as any).description,
+        h1: (doc as any).h1,
+        canonical: (doc as any).canonical,
+        brandAssets: (doc as any).brandAssets,
+        screenshot: (doc as any).screenshot,
         provider: doc.provider,
         model: doc.model,
         status: doc.status,
@@ -217,10 +214,9 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
 /** GET /api/stylemd/runs */
 export async function listStyleMdRuns(req: Request, res: Response): Promise<void> {
   try {
-    await connectMongo();
     const runs = await StyleMdRun.find({})
       .sort({ createdAt: -1 })
-      .select("url slug runId provider model status createdAt")
+      .select("url slug runId provider model status createdAt title screenshot")
       .lean<StyleMdRunDoc[]>();
 
     res.json({
@@ -228,7 +224,9 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
       data: runs.map((r) => ({
         id: r.runId ?? r.slug ?? r.url,
         url: r.url,
-        slug: r.slug ?? slugFromUrl(r.url),
+        slug: r.slug,
+        title: (r as any).title,
+        screenshot: (r as any).screenshot,
         provider: r.provider ?? "kimi",
         model: r.model,
         status: r.status ?? "completed",

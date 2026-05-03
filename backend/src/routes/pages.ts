@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { StyleMdRun } from "../models/StyleMdRun";
-import { connectMongo } from "@/lib/mongodb";
+import { connectDB } from "@/lib/mongodb";
 
 export const pagesRouter = Router();
 
@@ -12,7 +12,7 @@ pagesRouter.get("/stylemd", (_req: Request, res: Response) => {
 
 pagesRouter.get("/styleguide", (req: Request, res: Response, next: NextFunction) => {
   (async () => {
-    await connectMongo();
+
     // Find the latest completed run
     const latest = await StyleMdRun.findOne({ 
       status: { $in: ["completed", "completed_with_warnings"] },

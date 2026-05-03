@@ -2,10 +2,12 @@ import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
-import { connectMongo } from "@/lib/mongodb";
+import mongoose from "mongoose";
+import { connectDB, safeWrite, mongoKeepAlive } from "@/lib/mongodb";
+import { scrape } from "@/backend/src/services/scraper";
 import { StyleMdRun } from "@/backend/src/models/StyleMdRun";
 import { ScrapedData } from "@/backend/src/models/ScrapedData";
-import { pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
+import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import {
   appendStyleMdLogLine,
   getStyleMdRunDir,
@@ -103,23 +105,55 @@ export async function runSimplifiedStyleMdPipeline(
   screenshot: string;
   model: string;
 }> {
+  // Step 3: Auto-recover in pipeline
+  await connectDB();
+  if (mongoose.connection.readyState !== 1) {
+    throw new Error("Mongo not connected after retry");
+  }
+
   const id = runId();
   const runIdValue = id;
   const abortController = new AbortController();
   const signal = abortController.signal;
   const runtime = resolveStyleMdRuntimeConfig(provider);
 
-  // Register the run as pending in MongoDB immediately so polling can resolve
-  // the runId before the pipeline finishes.
+  // Step 1 & 2: Collection-based Keep-Alive Ping at 10s frequency
+  const keepAliveInterval = setInterval(async () => {
+    await mongoKeepAlive();
+  }, 10000);
+
+  // Step 6: Reduce idle gap with a lightweight write (Non-blocking)
   try {
-    await markStyleMdRunPendingInMongo({
-      url,
-      runId: runIdValue,
-      provider: runtime.provider,
-      model: runtime.model,
-    });
-  } catch (err) {
-    console.warn("[simplifiedPipeline] Failed to mark run pending in MongoDB:", err instanceof Error ? err.message : String(err));
+    await safeWrite(() =>
+      StyleMdRun.updateOne({ runId: id }, { $set: { lastPing: new Date() } })
+    );
+  } catch (e) {
+    console.warn("[PIPELINE] early ping persist failed, continuing under unstable network", e);
+  }
+
+
+  // 🔴 STEP 1: MOVE SCRAPE TO START (In-memory only for now)
+  console.log(`[PIPELINE] Early scraping ${url}...`);
+  const canonUrl = canonicalPageUrl(url);
+  const scraped = await scrape(canonUrl);
+
+  // 🔴 STEP 2: OPTIONAL/NON-BLOCKING SCRAPED DATA PERSIST
+  if (scraped) {
+    // We do NOT wait for this to block the pipeline
+    safeWrite(() =>
+      ScrapedData.updateOne(
+        { url: canonUrl },
+        {
+          $set: {
+            ...scraped,
+            url: canonUrl,
+            updatedAt: new Date()
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      )
+    ).catch(e => console.warn("[SCRAPE] optional persist failed, ignoring", e));
   }
 
   const config = mergeConfig({});
@@ -270,6 +304,7 @@ export async function runSimplifiedStyleMdPipeline(
   });
 
   let fullScreenshotPath = "";
+  let screenshotBase64Var = "";
 
   try {
     browser = await chromium.launch({
@@ -312,41 +347,31 @@ export async function runSimplifiedStyleMdPipeline(
 
       // --- Save screenshot to MongoDB immediately after capture ---
       try {
-        console.log(`[SCREENSHOT] Compressing screenshot for DB storage...`);
-        const rawBuffer = await readFile(fullScreenshotPath);
-        const compressedBuffer = await sharp(rawBuffer)
-          .resize({ width: 900, withoutEnlargement: true })
-          .jpeg({ quality: 80 })
+        // --- STABILIZED SCREENSHOT FLOW ---
+        console.log(`[SCREENSHOT] Capturing directly to buffer...`);
+        const buffer = await page!.screenshot({
+          type: "jpeg",
+          quality: 60,
+          fullPage: true,
+        });
+
+        console.log(`[SCREENSHOT] Compressing with sharp...`);
+        const compressedBuffer = await sharp(buffer)
+          .resize({ width: 1000, withoutEnlargement: true })
+          .jpeg({ quality: 60 })
           .toBuffer();
-        const screenshotBase64 = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
-        console.log(`[SCREENSHOT] Compressed to ${compressedBuffer.length} bytes (base64 length: ${screenshotBase64.length}). Saving to MongoDB...`);
 
-        await connectMongo();
-        const canonUrl = canonicalPageUrl(url);
-        const urlVariants = pageUrlVariantsForLookup(canonUrl);
+        console.log(`[SCREENSHOT] final size: ${compressedBuffer.length} bytes`);
 
-        const images = [screenshotBase64];
-
-        // Update StyleMdRun with screenshot
-        await StyleMdRun.updateOne(
-          { $or: [{ runId: runIdValue }, { url: { $in: urlVariants } }] },
-          { $set: { images } },
-        );
-
-        // Update or upsert ScrapedData with screenshot
-        const scrapedHit = await ScrapedData.findOne({ url: { $in: urlVariants } }).lean<{ _id?: unknown } | null>();
-        if (scrapedHit?._id) {
-          await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: { images } });
-        } else {
-          await ScrapedData.updateOne(
-            { url: canonUrl },
-            { $set: { images, url: canonUrl }, $setOnInsert: { createdAt: new Date() } },
-            { upsert: true },
-          );
+        if (compressedBuffer.length > 1_000_000) {
+          console.warn(`[SCREENSHOT] too large (${compressedBuffer.length} bytes), skipping DB save`);
+          return;
         }
-        console.log(`[SCREENSHOT] ✅ Screenshot saved to MongoDB for runId: ${runIdValue}`);
+
+        screenshotBase64Var = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
+        console.log(`[SCREENSHOT] ✅ Captured screenshot in-memory for final persist.`);
       } catch (ssErr) {
-        console.warn(`[SCREENSHOT] ⚠️ Failed to save screenshot to DB: ${ssErr instanceof Error ? ssErr.message : String(ssErr)}`);
+        console.warn(`[SCREENSHOT] ⚠️ Failed to capture screenshot: ${ssErr instanceof Error ? ssErr.message : String(ssErr)}`);
       }
     });
 
@@ -367,7 +392,7 @@ export async function runSimplifiedStyleMdPipeline(
         },
       });
       await publishState();
-
+      await mongoKeepAlive();
       return output.result;
     });
 
@@ -390,7 +415,7 @@ export async function runSimplifiedStyleMdPipeline(
         },
       });
       await publishState();
-
+      await mongoKeepAlive();
       return output.result;
     });
 
@@ -455,6 +480,7 @@ export async function runSimplifiedStyleMdPipeline(
         registerArtifacts(output.artifacts);
         await publishState();
 
+        await mongoKeepAlive(); // Step 3: Mid-stage keepalive
         return output.result;
       });
     } catch (error) {
@@ -490,16 +516,8 @@ export async function runSimplifiedStyleMdPipeline(
       styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
     }
 
-    let screenshotBase64 = "";
-    try {
-      const screenshotPath = join(getStyleMdRunDir(runIdValue), "full_screenshot.png");
-      const rawBuffer = await readFile(screenshotPath);
-      screenshotBase64 = `data:image/jpeg;base64,${rawBuffer.toString("base64")}`;
-      console.log(`[SIMPLE PIPELINE] Screenshot read from disk, base64 length=${screenshotBase64.length}`);
-    } catch (err) {
-      screenshotBase64 = "";
-      console.warn(`[SIMPLE PIPELINE] Failed to resolve screenshot: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    // Use the already captured and compressed screenshot
+    const screenshotBase64 = screenshotBase64Var;
 
     const summary: StyleMdRunSummary = {
       runId: runIdValue,
@@ -532,22 +550,32 @@ export async function runSimplifiedStyleMdPipeline(
     });
     await publishState();
 
-    // Persist to MongoDB BEFORE emitting the completed event so the frontend
-    // can use data.styleMd from the SSE payload and the first DB poll already
-    // finds a completed record.
+    // Step 3: Reconnect before final write
+    if (mongoose.connection.readyState !== 1) {
+      console.warn("[MONGO] reconnecting before final write...");
+      await connectDB();
+    }
+
+    // 🔴 PRIMARY OUTPUT: Persist styleMd critically
     try {
+      console.log(`[PIPELINE] Saving final StyleMdRun for ${runIdValue}...`);
       await persistStyleMdAfterGeneration({
         url,
         runId: runIdValue,
         provider: runtime.provider,
         model: runtime.model,
         styleMd: styleMdContent,
-        screenshot: screenshotBase64,
+        screenshot: screenshotBase64Var, // Use the high-quality captured screenshot
         runStatus: summary.status,
+        brandAssets: scraped?.brandAssets, // Pass extracted brand assets
+        title: scraped?.title,
+        description: scraped?.description,
+        h1: scraped?.h1,
+        canonical: scraped?.canonical,
       });
     } catch (dbErr) {
-      console.error(`[simplifiedPipeline] CRITICAL: MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
-      throw dbErr; // NO success response if DB write fails
+      console.error(`[PIPELINE] CRITICAL: Final StyleMdRun persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+      throw dbErr; // Fail the pipeline if the primary output cannot be saved
     }
 
     await emitAndLog({
@@ -602,8 +630,29 @@ export async function runSimplifiedStyleMdPipeline(
     });
     await publishState();
 
+    // --- PERSIST FAILURE TO MONGODB ---
+    try {
+      const finalStatus = canceled ? "canceled" : "failed";
+      console.log(`[PIPELINE] marking run ${finalStatus}: ${runIdValue}`);
+      await connectDB();
+      await safeWrite(() =>
+        StyleMdRun.updateOne(
+          { runId: runIdValue },
+          {
+            $set: {
+              status: finalStatus,
+              updatedAt: new Date()
+            }
+          }
+        )
+      );
+    } catch (dbErr) {
+      console.warn(`[PIPELINE] Failed to persist failure status to MongoDB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+    }
+
     throw error;
   } finally {
+    clearInterval(keepAliveInterval);
     signal.removeEventListener("abort", onAbort);
     await closeBrowser();
   }

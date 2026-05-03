@@ -40,7 +40,7 @@ export async function getSessionEvents(_req: Request, res: Response): Promise<vo
 export async function resetSession(_req: Request, res: Response): Promise<void> {
   try {
     resetStyleMdSessionState("Session reset by user.");
-    res.json({ ok: true });
+    res.json({ ok: true, data: null });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     res.status(500).json({ ok: false, error: message });
