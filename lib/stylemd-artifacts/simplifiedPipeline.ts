@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { readFile } from "node:fs/promises";
-import { fileToBase64 } from "@/lib/utils/fileToBase64";
 import sharp from "sharp";
 import { connectMongo } from "@/lib/mongodb";
 import { StyleMdRun } from "@/backend/src/models/StyleMdRun";
@@ -101,7 +100,6 @@ export async function runSimplifiedStyleMdPipeline(
 ): Promise<{
   runId: string;
   styleMd: string;
-  screenshotUrl: string;
   screenshot: string;
   model: string;
 }> {
@@ -318,30 +316,31 @@ export async function runSimplifiedStyleMdPipeline(
         const rawBuffer = await readFile(fullScreenshotPath);
         const compressedBuffer = await sharp(rawBuffer)
           .resize({ width: 900, withoutEnlargement: true })
-          .png({ compressionLevel: 9 })
+          .jpeg({ quality: 80 })
           .toBuffer();
-        const screenshotBase64 = `data:image/png;base64,${compressedBuffer.toString("base64")}`;
-        const screenshotUrl = `/styleguide-files/${runIdValue}/full_screenshot.png`;
+        const screenshotBase64 = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
         console.log(`[SCREENSHOT] Compressed to ${compressedBuffer.length} bytes (base64 length: ${screenshotBase64.length}). Saving to MongoDB...`);
 
         await connectMongo();
-        const canonUrl = new URL(url).href;
+        const canonUrl = canonicalPageUrl(url);
         const urlVariants = pageUrlVariantsForLookup(canonUrl);
+
+        const images = [screenshotBase64];
 
         // Update StyleMdRun with screenshot
         await StyleMdRun.updateOne(
           { $or: [{ runId: runIdValue }, { url: { $in: urlVariants } }] },
-          { $set: { screenshot: screenshotBase64, screenshotUrl } },
+          { $set: { images } },
         );
 
         // Update or upsert ScrapedData with screenshot
         const scrapedHit = await ScrapedData.findOne({ url: { $in: urlVariants } }).lean<{ _id?: unknown } | null>();
         if (scrapedHit?._id) {
-          await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: { screenshot: screenshotBase64, screenshotUrl } });
+          await ScrapedData.updateOne({ _id: scrapedHit._id }, { $set: { images } });
         } else {
           await ScrapedData.updateOne(
             { url: canonUrl },
-            { $set: { screenshot: screenshotBase64, screenshotUrl, url: canonUrl }, $setOnInsert: { createdAt: new Date() } },
+            { $set: { images, url: canonUrl }, $setOnInsert: { createdAt: new Date() } },
             { upsert: true },
           );
         }
@@ -491,15 +490,15 @@ export async function runSimplifiedStyleMdPipeline(
       styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
     }
 
-    let screenshotUrlPath = "";
-    const screenshotBase64 = "";
+    let screenshotBase64 = "";
     try {
       const screenshotPath = join(getStyleMdRunDir(runIdValue), "full_screenshot.png");
-      screenshotUrlPath = `/styleguide-files/${runIdValue}/full_screenshot.png`;
-      console.log(`[SIMPLE PIPELINE] Screenshot saved to ${screenshotPath}, URL: ${screenshotUrlPath}`);
+      const rawBuffer = await readFile(screenshotPath);
+      screenshotBase64 = `data:image/jpeg;base64,${rawBuffer.toString("base64")}`;
+      console.log(`[SIMPLE PIPELINE] Screenshot read from disk, base64 length=${screenshotBase64.length}`);
     } catch (err) {
-      screenshotUrlPath = "";
-      console.warn(`[SIMPLE PIPELINE] Failed to resolve screenshot URL: ${err instanceof Error ? err.message : String(err)}`);
+      screenshotBase64 = "";
+      console.warn(`[SIMPLE PIPELINE] Failed to resolve screenshot: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const summary: StyleMdRunSummary = {
@@ -543,12 +542,12 @@ export async function runSimplifiedStyleMdPipeline(
         provider: runtime.provider,
         model: runtime.model,
         styleMd: styleMdContent,
-        screenshotUrl: screenshotUrlPath,
         screenshot: screenshotBase64,
         runStatus: summary.status,
       });
     } catch (dbErr) {
-      console.warn(`[simplifiedPipeline] MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+      console.error(`[simplifiedPipeline] CRITICAL: MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+      throw dbErr; // NO success response if DB write fails
     }
 
     await emitAndLog({
@@ -571,7 +570,6 @@ export async function runSimplifiedStyleMdPipeline(
     return {
       runId: runIdValue,
       styleMd: styleMdContent,
-      screenshotUrl: screenshotUrlPath,
       screenshot: screenshotBase64,
       model: runtime.model,
     };

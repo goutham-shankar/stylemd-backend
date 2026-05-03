@@ -20,8 +20,7 @@ interface StyleMdRunDoc {
   provider?: string;
   model?: string;
   styleMd?: string;
-  screenshotUrl?: string;
-  screenshot?: string;
+  images?: string[];
   status?: string;
   createdAt?: Date;
 }
@@ -29,8 +28,6 @@ interface StyleMdRunDoc {
 const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
-  screenshotUrl: z.string().url().optional(),
-  screenshot: z.string().optional(),
 });
 
 export async function clearCache(_req: Request, res: Response): Promise<void> {
@@ -66,8 +63,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
           slug: existing.slug ?? slugFromUrl(existing.url),
           runId: existing.runId,
           styleMd: existing.styleMd,
-          screenshotUrl: existing.screenshotUrl,
-          screenshot: existing.screenshot ?? "",
+          images: existing.images ?? [],
           provider: existing.provider,
           model: existing.model,
           status: existing.status,
@@ -94,12 +90,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     }
 
     // --- Run the pipeline ---
-    const userProvidedScreenshotUrl = screenshotUrl;
-    const userProvidedScreenshot = screenshot;
     const result = await runSimplifiedStyleMdPipeline(url, provider);
-
-    const usedScreenshotUrl = userProvidedScreenshotUrl || result.screenshotUrl;
-    const usedScreenshot = userProvidedScreenshot || result.screenshot;
 
     const slugBase = await ensureUniqueSlug(slugFromUrl(url));
     const persisted = await persistStyleMdAfterGeneration({
@@ -108,8 +99,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       provider,
       model: result.model,
       styleMd: result.styleMd,
-      screenshotUrl: usedScreenshotUrl,
-      screenshot: usedScreenshot,
+      screenshot: result.screenshot,
       slug: slugBase,
       runStatus: result.styleMd?.trim() ? "completed" : "completed_with_warnings",
     });
@@ -125,8 +115,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
         provider,
         model: result.model,
         styleMd: result.styleMd,
-        screenshotUrl: usedScreenshotUrl,
-        screenshot: usedScreenshot,
+        images: result.screenshot ? [result.screenshot] : [],
         status: "completed",
         createdAt: now.toISOString(),
       },
@@ -183,8 +172,7 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
         slug: doc.slug ?? slugFromUrl(doc.url),
         runId: doc.runId,
         styleMd,
-        screenshotUrl: doc.screenshotUrl ?? "",
-        screenshot: doc.screenshot ?? "",
+        images: doc.images ?? [],
         provider: doc.provider,
         model: doc.model,
         status: doc.status,
@@ -218,7 +206,7 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
 
     res.json({
       ok: true,
-      summaries: runs.map((r) => ({
+      data: runs.map((r) => ({
         id: r.runId ?? r.slug ?? r.url,
         url: r.url,
         slug: r.slug ?? slugFromUrl(r.url),

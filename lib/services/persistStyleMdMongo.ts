@@ -37,8 +37,7 @@ export type PersistStyleMdInput = {
   provider: string;
   model: string;
   styleMd: string;
-  screenshotUrl: string;
-  screenshot: string;
+  screenshot: string; // base64 ONLY
   /** If omitted, derived via {@link ensureUniqueSlug}({@link slugFromUrl}(url)). */
   slug?: string;
   /** Stored as `status` on the run (e.g. completed_with_warnings, failed). Overrides inferred status. */
@@ -74,8 +73,7 @@ export async function markStyleMdRunPendingInMongo(input: {
     model: input.model,
     status: "running",
     styleMd: "",
-    screenshotUrl: "",
-    screenshot: "",
+    images: [],
   };
 
   if (existing?._id) {
@@ -100,7 +98,6 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
   const rawMd = stripLeadingModelPreamble(input.styleMd ?? "");
   const styleMd = rawMd.trim();
   let screenshot = input.screenshot?.trim() ?? "";
-  const screenshotUrl = input.screenshotUrl?.trim() ?? "";
 
   // MongoDB 16MB document limit: avoid storing huge base64 strings
   if (screenshot.length > 5 * 1024 * 1024) {
@@ -110,9 +107,6 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
 
   await connectMongo();
 
-  // Reuse existing record's slug (e.g., set by markStyleMdRunPendingInMongo) to prevent
-  // ensureUniqueSlug from generating a new suffix ("levainbakery-2") for a URL that
-  // already has a pending record with slug "levainbakery".
   const existingSlug =
     input.slug == null
       ? (
@@ -125,7 +119,7 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
   const slug = input.slug ?? (existingSlug || (await ensureUniqueSlug(slugFromUrl(canonUrl))));
   const now = new Date();
   const hasStyleMd = Boolean(styleMd);
-  const hasScreenshot = Boolean(screenshot) || Boolean(screenshotUrl);
+  const hasScreenshot = Boolean(screenshot);
   const status =
     input.runStatus ??
     (!hasStyleMd && !hasScreenshot
@@ -141,8 +135,7 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
     provider: input.provider,
     model: input.model,
     styleMd,
-    screenshotUrl,
-    screenshot,
+    images: hasScreenshot ? [screenshot] : [],
     status,
     createdAt: now,
   };
@@ -188,8 +181,10 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
         description: scrapedData.description,
         h1: scrapedData.h1,
         canonical: scrapedData.canonical,
-        images: scrapedData.images,
-      } : {})
+        images: scrapedData.images, // scraper.ts already puts base64 screenshot in images[0]
+      } : {
+        images: hasScreenshot ? [screenshot] : []
+      })
     };
     
     console.log(`[DB] Saving to MongoDB...`);

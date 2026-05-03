@@ -1,5 +1,8 @@
+import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
+
 /**
  * Canonical page URL + lookup variants so `https://a.com/` and `https://www.a.com` resolve to the same row.
+ * Strips all query parameters and hash fragments for strict deduplication.
  */
 
 export function canonicalPageUrl(raw: string): string {
@@ -10,7 +13,9 @@ export function canonicalPageUrl(raw: string): string {
   if (hostname.startsWith("www.")) hostname = hostname.slice(4);
   let pathname = u.pathname || "/";
   if (pathname !== "/" && pathname.endsWith("/")) pathname = pathname.slice(0, -1);
-  return `${proto}//${hostname}${pathname === "/" ? "/" : pathname}${u.search}`;
+  
+  // STRIP all query params and hash fragments
+  return `${proto}//${hostname}${pathname === "/" ? "/" : pathname}`;
 }
 
 /** Alias strings commonly stored alongside the canonical URL in Mongo unique indexes. */
@@ -22,9 +27,9 @@ export function pageUrlVariantsForLookup(raw: string): string[] {
     out.add(canon);
     const u = new URL(canon);
     const path = u.pathname === "/" ? "/" : u.pathname;
-    const nonWww = `${u.protocol}//${u.hostname}${path}${u.search}`;
+    const nonWww = `${u.protocol}//${u.hostname}${path}`;
     out.add(nonWww);
-    out.add(`${u.protocol}//www.${u.hostname}${path}${u.search}`);
+    out.add(`${u.protocol}//www.${u.hostname}${path}`);
   } catch {
     /* keep trimmed only */
   }

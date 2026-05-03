@@ -1,66 +1,108 @@
 import * as cheerio from "cheerio";
-import { normalize, type NormalizedData } from "./normalize";
+import { chromium } from "playwright";
 
-async function fetchWithTimeout(url: string, timeoutMs = 15000): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
+export interface NormalizedData {
+  url: string;
+  title: string | null;
+  description: string | null;
+  h1: string | null;
+  canonical: string | null;
+  images: string[];
+  contentText: string | null;
+  rawHtml: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Scrape a single URL using Playwright (screenshot) + Cheerio (DOM extraction).
+// image/jpeg ONLY. Base64 ONLY.
+// ---------------------------------------------------------------------------
+
+async function scrapeOnce(url: string): Promise<NormalizedData> {
+  console.log(`[SCRAPE] scraping url=${url}`);
+
+  let browser = null;
+  let screenshotBase64: string | null = null;
+
   try {
-    const res = await fetch(url, { signal: controller.signal, redirect: "follow" });
-    clearTimeout(id);
-    return res;
-  } catch (err) {
-    clearTimeout(id);
-    throw err;
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+    // Take JPEG screenshot entirely in-memory — no file paths, no disk writes
+    const buffer = await page.screenshot({ type: "jpeg", quality: 80 });
+    
+    // VALIDATE buffer
+    if (!buffer || buffer.length === 0) {
+      throw new Error(`Failed to capture screenshot for ${url}: empty buffer`);
+    }
+
+    screenshotBase64 = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    console.log(`[SCRAPE] screenshot captured, base64 length=${screenshotBase64.length}`);
+
+    const rawHtml = await page.content();
+    await browser.close();
+    browser = null;
+
+    const $ = cheerio.load(rawHtml);
+
+    const title =
+      $("head > title").first().text().trim() ||
+      $('meta[property="og:title"]').attr("content") ||
+      null;
+
+    const description =
+      $('meta[name="description"]').attr("content") ||
+      $('meta[property="og:description"]').attr("content") ||
+      null;
+
+    const h1 = $("h1").first().text().trim() || null;
+
+    const canonical = $('link[rel="canonical"]').attr("href") || null;
+
+    // images array MUST be Base64 ONLY. Remove all raw URLs.
+    const images: string[] = [screenshotBase64];
+
+    const contentText = $("body")
+      .text()
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 20_000);
+
+    console.log(`[SCRAPE] extracted title="${title?.slice(0, 60)}" images=1`);
+
+    return { 
+      url, 
+      title: title ? String(title).trim() : null, 
+      description: description ? String(description).trim() : null, 
+      h1: h1 ? String(h1).trim() : null, 
+      canonical: canonical ? String(canonical).trim() : null, 
+      images, 
+      contentText: contentText ? String(contentText).trim() : null, 
+      rawHtml: rawHtml ? String(rawHtml) : null 
+    };
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => undefined);
+    }
   }
 }
 
-async function scrapeOnce(url: string): Promise<NormalizedData> {
-  console.log(`[SCRAPER] Starting to scrape: ${url}`);
-  
-  const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-  const html = await res.text();
-  console.log(`[SCRAPER] Fetched HTML, length: ${html.length}`);
-  
-  const $ = cheerio.load(html);
-  
-  const title = $("head > title").first().text().trim() || $('meta[property="og:title"]').attr("content") || null;
-  console.log(`[EXTRACTOR] Extracted title: ${title}`);
-  
-  const description = $('meta[name="description"]').attr("content") || $('meta[property="og:description"]').attr("content") || null;
-  console.log(`[EXTRACTOR] Extracted description: ${description?.slice(0, 100)}...`);
-  
-  const h1 = $("h1").first().text().trim() || null;
-  console.log(`[EXTRACTOR] Extracted h1: ${h1}`);
-  
-  const canonical = $('link[rel="canonical"]').attr("href") || null;
-  console.log(`[EXTRACTOR] Extracted canonical: ${canonical}`);
-  
-  const images: string[] = [];
-  $("img").each((_i, el) => { const src = $(el).attr("src"); if (src) images.push(src); });
-  const ogImage = $('meta[property="og:image"]').attr("content");
-  if (ogImage) images.push(ogImage);
-  const twitterImage = $('meta[name="twitter:image"]').attr("content");
-  if (twitterImage) images.push(twitterImage);
-  console.log(`[EXTRACTOR] Found ${images.length} images:`, images);
-  
-  const contentText = $("body").text().replace(/\s+/g, " ").trim().slice(0, 20000);
-  console.log(`[SCRAPER] Extracted contentText, length: ${contentText.length}`);
-  
-  const result = normalize({ url, title, description, h1, canonical, images, contentText, rawHtml: html });
-  console.log(`[SCRAPER] Normalized data, images count: ${result.images.length}`);
-  
-  return result;
-}
-
+// ---------------------------------------------------------------------------
+// Public export — retries on transient failures.
+// Returns null only after all retries are exhausted.
+// ---------------------------------------------------------------------------
 export async function scrape(url: string, retries = 2, delayMs = 1000): Promise<NormalizedData | null> {
   let attempt = 0;
   while (attempt <= retries) {
-    try { return await scrapeOnce(url); } catch (err) {
-      console.error(`[ERROR] Failed to extract images:`, err);
-      attempt += 1;
-      if (attempt > retries) { console.error("[SCRAPER] Failed after retries:", err); return null; }
-      console.log(`[SCRAPER] Retry ${attempt}/${retries} after ${delayMs * attempt}ms...`);
+    try {
+      return await scrapeOnce(url);
+    } catch (err) {
+      attempt++;
+      if (attempt > retries) {
+        console.error(`[SCRAPE] error url=${url}`, err instanceof Error ? err.message : String(err));
+        return null;
+      }
+      console.warn(`[SCRAPE] retry ${attempt}/${retries} url=${url} delay=${delayMs * attempt}ms`);
       await new Promise((r) => setTimeout(r, delayMs * attempt));
     }
   }
