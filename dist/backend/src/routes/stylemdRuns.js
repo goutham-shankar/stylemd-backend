@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.stylemdRunsRouter = void 0;
+const express_1 = require("express");
+const stylemdRuns_controller_1 = require("../controllers/stylemdRuns.controller");
+exports.stylemdRunsRouter = (0, express_1.Router)();
+exports.stylemdRunsRouter.post("/run", (req, res, next) => { (0, stylemdRuns_controller_1.startRun)(req, res).catch(next); });
+exports.stylemdRunsRouter.post("/cancel", (req, res, next) => { (0, stylemdRuns_controller_1.cancelRun)(req, res).catch(next); });
+exports.stylemdRunsRouter.get("/runs", (req, res, next) => { (0, stylemdRuns_controller_1.listRuns)(req, res).catch(next); });
+exports.stylemdRunsRouter.get("/runs/:runId", (req, res, next) => { (0, stylemdRuns_controller_1.getRunSummary)(req, res).catch(next); });

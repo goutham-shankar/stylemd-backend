@@ -25,7 +25,6 @@ import type {
   StyleMdArtifactRecord,
   StyleMdCuratedManifest,
   StyleMdFontManifest,
-  StyleMdPipelineStageName,
   StyleMdResponsiveHoverEvidence,
   StyleMdShowcaseResult,
   StyleMdStyleguideResult,
@@ -1584,7 +1583,7 @@ function isBinaryFile(filePath: string): boolean {
 function createPreToolUsePathGuard(input: {
   runId: string;
   workspaceDir: string;
-  stageName: Extract<StyleMdPipelineStageName, "styleguide" | "showcase">;
+  stageName: "styleguide" | "showcase";
 }): HookCallback {
   const { runId, workspaceDir, stageName } = input;
 

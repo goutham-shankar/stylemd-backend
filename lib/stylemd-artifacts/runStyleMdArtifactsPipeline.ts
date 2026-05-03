@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import {
@@ -41,6 +42,8 @@ import {
   type StyleMdRunSummary,
 } from "@/lib/stylemd-artifacts/types";
 import type { PlaygroundEvent } from "@/lib/types/stylemdEvents";
+import { fileToBase64 } from "@/lib/utils/fileToBase64";
+import { markStyleMdRunPendingInMongo, persistStyleMdAfterGeneration } from "@/lib/services/persistStyleMdMongo";
 
 type StyleMdPipelineEventPayload = {
   type: PlaygroundEvent["type"];
@@ -75,7 +78,21 @@ export async function runStyleMdArtifactsPipeline(
   const signal = abortController.signal;
   const config = mergeConfig(options.config);
   const runtime = options.runtime ?? resolveStyleMdRuntimeConfig(options.provider ?? "claude");
-  
+
+  try {
+    await markStyleMdRunPendingInMongo({
+      url,
+      runId,
+      provider: runtime.provider,
+      model: runtime.model,
+    });
+  } catch (err) {
+    console.warn(
+      "[runStyleMdArtifactsPipeline] Failed to mark run pending in MongoDB:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+
   // Use Kimi for curation and generation stages (curate, styleguide) to reduce costs
   const kimiRuntime = resolveStyleMdRuntimeConfig("kimi");
 
@@ -525,6 +542,41 @@ export async function runStyleMdArtifactsPipeline(
       },
     });
 
+    try {
+      const styleMdPath =
+        styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runId), "style.md");
+      let styleMdContent = "";
+      try {
+        styleMdContent = await readFile(styleMdPath, "utf-8");
+      } catch {
+        styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
+      }
+
+      let screenshotUrlPath = `/styleguide-files/${runId}/full_screenshot.png`;
+      let screenshotBase64 = "";
+      try {
+        screenshotBase64 = await fileToBase64(join(getStyleMdRunDir(runId), "full_screenshot.png"), "image/png");
+      } catch {
+        screenshotUrlPath = "";
+        screenshotBase64 = "";
+      }
+
+      await persistStyleMdAfterGeneration({
+        url,
+        runId,
+        provider: runtime.provider,
+        model: runtime.model,
+        styleMd: styleMdContent,
+        screenshotUrl: screenshotUrlPath,
+        screenshot: screenshotBase64,
+        runStatus: summary.status,
+      });
+    } catch (dbErr) {
+      console.warn(
+        `[runStyleMdArtifactsPipeline] MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
+      );
+    }
+
     return {
       ...summary,
       artifacts: state.artifacts,
@@ -571,6 +623,23 @@ export async function runStyleMdArtifactsPipeline(
         latestUrl: summary.showcase.latestUrl,
       },
     });
+
+    try {
+      await persistStyleMdAfterGeneration({
+        url,
+        runId,
+        provider: runtime.provider,
+        model: runtime.model,
+        styleMd: "",
+        screenshotUrl: "",
+        screenshot: "",
+        runStatus: summary.status,
+      });
+    } catch (dbErr) {
+      console.warn(
+        `[runStyleMdArtifactsPipeline] MongoDB persist (terminal state) failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
+      );
+    }
 
     return summary;
   } finally {

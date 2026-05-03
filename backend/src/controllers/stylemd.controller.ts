@@ -3,6 +3,11 @@ import { z } from "zod";
 import { validateStyleMdProviderCredentials } from "@/lib/stylemd-artifacts/provider";
 import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
 import { connectMongo } from "@/lib/mongodb";
+import {
+  ensureUniqueSlug,
+  persistStyleMdAfterGeneration,
+  slugFromUrl,
+} from "@/lib/services/persistStyleMdMongo";
 import { StyleMdRun } from "../models/StyleMdRun";
 
 interface StyleMdRunDoc {
@@ -22,41 +27,6 @@ const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
 });
-
-/**
- * Generate a URL-friendly slug from a URL.
- * e.g. "https://www.youtube.com/watch?v=123" → "youtube"
- */
-function slugFromUrl(rawUrl: string): string {
-  try {
-    const hostname = new URL(rawUrl).hostname;
-    // Remove www. and any other common subdomains, keep the main domain name
-    const parts = hostname.replace(/^www\./, "").split(".");
-    // Take the second-to-last part (main domain name) if TLD is present
-    const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-    // Sanitise to URL-safe chars
-    return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-  } catch {
-    return "unknown";
-  }
-}
-
-/**
- * Ensure a slug is unique in the DB. If "youtube" already exists,
- * try "youtube-2", "youtube-3", etc.
- */
-async function ensureUniqueSlug(base: string): Promise<string> {
-  const existing = await StyleMdRun.findOne({ slug: base }).lean();
-  if (!existing) return base;
-
-  for (let i = 2; i <= 999; i++) {
-    const candidate = `${base}-${i}`;
-    const clash = await StyleMdRun.findOne({ slug: candidate }).lean();
-    if (!clash) return candidate;
-  }
-  // Fallback: append timestamp
-  return `${base}-${Date.now()}`;
-}
 
 export async function clearCache(_req: Request, res: Response): Promise<void> {
   try {
@@ -80,9 +50,9 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     const { url, provider } = requestSchema.parse(req.body);
     await connectMongo();
 
-    // --- Cache hit ---
+    // --- Cache hit (skip in-flight artifact runs and empty placeholders) ---
     const existing = await StyleMdRun.findOne({ url }).lean<StyleMdRunDoc>();
-    if (existing) {
+    if (existing && existing.status !== "running" && existing.styleMd?.trim()) {
       res.json({
         ok: true,
         data: {
@@ -102,6 +72,14 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    if (existing?.status === "running") {
+      res.status(409).json({
+        ok: false,
+        error: "A StyleMD run is already in progress for this URL. Wait for it to finish or use the artifact pipeline status API.",
+      });
+      return;
+    }
+
     // --- Credential check ---
     const credentialError = validateStyleMdProviderCredentials(provider);
     if (credentialError) {
@@ -112,42 +90,20 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     // --- Run the pipeline ---
     const result = await runSimplifiedStyleMdPipeline(url, provider);
 
-    const slug = await ensureUniqueSlug(slugFromUrl(url));
-    const now = new Date();
-    const runData = {
+    const slugBase = await ensureUniqueSlug(slugFromUrl(url));
+    const persisted = await persistStyleMdAfterGeneration({
       url,
-      slug,
       runId: result.runId,
       provider,
       model: result.model,
       styleMd: result.styleMd,
       screenshotUrl: result.screenshotUrl,
       screenshot: result.screenshot,
-      status: "completed",
-      createdAt: now,
-    };
-
-    // --- Persist (upsert-safe) ---
-    try {
-      const savedRun = await StyleMdRun.create(runData);
-      console.log(`[runStyleMd] Successfully saved run:`, { runId: result.runId, slug, url });
-      
-      // Verify the data was saved
-      const verify = await StyleMdRun.findOne({ runId: result.runId }).lean();
-      console.log(`[runStyleMd] Verification: Found by runId?`, !!verify);
-    } catch (dbErr: any) {
-      if (dbErr.code === 11000) {
-        // Duplicate key – another request raced us; upsert.
-        console.log(`[runStyleMd] Duplicate key detected, upserting for url: ${url}`);
-        await StyleMdRun.updateOne({ url }, { $set: runData });
-        
-        // Verify the data was updated
-        const verify = await StyleMdRun.findOne({ runId: result.runId }).lean();
-        console.log(`[runStyleMd] Verification after upsert: Found by runId?`, !!verify);
-      } else {
-        throw dbErr;
-      }
-    }
+      slug: slugBase,
+      runStatus: result.styleMd?.trim() ? "completed" : "completed_with_warnings",
+    });
+    const slug = persisted?.slug ?? slugBase;
+    const now = new Date();
 
     res.json({
       ok: true,
