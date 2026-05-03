@@ -25,7 +25,7 @@ import {
   runExtractStage,
 } from "@/lib/stylemd-artifacts/stages";
 import { runCurateStage } from "@/lib/stylemd-artifacts/curation";
-import { runShowcaseStage, runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
+import { runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
 import {
   resolveStyleMdRuntimeConfig,
   type StyleMdRuntimeConfig,
@@ -76,7 +76,7 @@ export async function runStyleMdArtifactsPipeline(
   const config = mergeConfig(options.config);
   const runtime = options.runtime ?? resolveStyleMdRuntimeConfig(options.provider ?? "claude");
   
-  // Use Kimi for curation and generation stages (curate, styleguide, showcase) to reduce costs
+  // Use Kimi for curation and generation stages (curate, styleguide) to reduce costs
   const kimiRuntime = resolveStyleMdRuntimeConfig("kimi");
 
   let state = createInitialRunState(runId, url, runtime.provider, runtime.model);
@@ -125,11 +125,10 @@ export async function runStyleMdArtifactsPipeline(
       dedup: { num: 3, emoji: "🎯" },
       curate: { num: 4, emoji: "📋" },
       styleguide: { num: 5, emoji: "✨" },
-      showcase: { num: 6, emoji: "🎪" },
     };
 
     const stageInfo = stageNames[stage] || { num: 0, emoji: "⚙️" };
-    console.log(`\n${stageInfo.emoji} [PIPELINE] Stage ${stageInfo.num}/6: ${stage.toUpperCase()}`);
+    console.log(`\n${stageInfo.emoji} [PIPELINE] Stage ${stageInfo.num}/5: ${stage.toUpperCase()}`);
 
     const startedAt = nowIso();
     const startedMs = Date.now();
@@ -161,7 +160,7 @@ export async function runStyleMdArtifactsPipeline(
     try {
       const output = await handler();
       const durationMs = Date.now() - startedMs;
-      console.log(`✅ [PIPELINE] Stage ${stageInfo.num}/6 complete (${durationMs}ms)\n`);
+      console.log(`✅ [PIPELINE] Stage ${stageInfo.num}/5 complete (${durationMs}ms)\n`);
 
       state = updateStageState(state, stage, {
         status: "completed",
@@ -474,49 +473,7 @@ export async function runStyleMdArtifactsPipeline(
       }
     }
 
-    const showcaseStageResult = await runStage("showcase", async () => {
-      const output = await runShowcaseStage({
-        runId,
-        url,
-        curatedManifestPath: curate.curatedManifestPath,
-        curatedManifest: curate.curatedManifest,
-        responsiveHoverEvidencePath,
-        styleMdPath: styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runId), "style.md"),
-        styleMarkdown: styleguideStageResult?.styleMarkdown,
-        evidenceAgentPath: styleguideStageResult?.evidenceAgentPath ?? join(getStyleMdRunDir(runId), "styleguide", "evidence.agent.json"),
-        typographyInventoryPath: styleguideStageResult?.typographyInventoryPath,
-        typographyInventory: styleguideStageResult?.typographyInventory,
-        requiredTypographyFamilies: styleguideStageResult?.requiredTypographyFamilies,
-        fontsManifestPath: extract.fontsManifestPath,
-        fontsLocalCssPath: extract.fontsLocalCssPath,
-        signal,
-        runtime: kimiRuntime,
-      });
 
-      registerArtifacts(output.artifacts);
-      state = updateRunState(state, {
-        showcase: output.result.showcase,
-      });
-      await publishState();
-
-      return output.result;
-    });
-
-    if (showcaseStageResult.warning) {
-      const warning = showcaseStageResult.warning;
-      state = updateRunState(state, {
-        warnings: [...state.warnings, warning],
-      });
-      await emitAndLog({
-        type: "stylemd_action",
-        source: "system",
-        runId,
-        stage: "showcase",
-        level: "warn",
-        message: warning,
-      });
-      await publishState();
-    }
 
     state = updateRunState(state, {
       status: hasStyleguideWarning || state.warnings.length > 0 ? "completed_with_warnings" : "completed",
@@ -533,7 +490,7 @@ export async function runStyleMdArtifactsPipeline(
       completedAt: state.completedAt,
       warnings: [
         ...state.warnings,
-        `Used ${kimiRuntime.provider} for curation and generation stages (curate, styleguide, showcase).`,
+        `Used ${kimiRuntime.provider} for curation and generation stages (curate, styleguide).`,
       ],
       artifacts: state.artifacts,
       metrics: {

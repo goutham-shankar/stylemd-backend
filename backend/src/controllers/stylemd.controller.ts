@@ -5,6 +5,19 @@ import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplified
 import { connectMongo } from "@/lib/mongodb";
 import { StyleMdRun } from "../models/StyleMdRun";
 
+interface StyleMdRunDoc {
+  url: string;
+  slug?: string;
+  runId?: string;
+  provider?: string;
+  model?: string;
+  styleMd?: string;
+  screenshotUrl?: string;
+  screenshot?: string;
+  status?: string;
+  createdAt?: Date;
+}
+
 const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
@@ -68,7 +81,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     await connectMongo();
 
     // --- Cache hit ---
-    const existing = await StyleMdRun.findOne({ url }).lean();
+    const existing = await StyleMdRun.findOne({ url }).lean<StyleMdRunDoc>();
     if (existing) {
       res.json({
         ok: true,
@@ -104,9 +117,9 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     const runData = {
       url,
       slug,
+      runId: result.runId,
       provider,
       model: result.model,
-      runId: result.runId,
       styleMd: result.styleMd,
       screenshotUrl: result.screenshotUrl,
       screenshot: result.screenshot,
@@ -116,11 +129,21 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
 
     // --- Persist (upsert-safe) ---
     try {
-      await StyleMdRun.create(runData);
+      const savedRun = await StyleMdRun.create(runData);
+      console.log(`[runStyleMd] Successfully saved run:`, { runId: result.runId, slug, url });
+      
+      // Verify the data was saved
+      const verify = await StyleMdRun.findOne({ runId: result.runId }).lean();
+      console.log(`[runStyleMd] Verification: Found by runId?`, !!verify);
     } catch (dbErr: any) {
       if (dbErr.code === 11000) {
         // Duplicate key – another request raced us; upsert.
+        console.log(`[runStyleMd] Duplicate key detected, upserting for url: ${url}`);
         await StyleMdRun.updateOne({ url }, { $set: runData });
+        
+        // Verify the data was updated
+        const verify = await StyleMdRun.findOne({ runId: result.runId }).lean();
+        console.log(`[runStyleMd] Verification after upsert: Found by runId?`, !!verify);
       } else {
         throw dbErr;
       }
@@ -131,9 +154,9 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       data: {
         url,
         slug,
+        runId: result.runId,
         provider,
         model: result.model,
-        runId: result.runId,
         styleMd: result.styleMd,
         screenshotUrl: result.screenshotUrl,
         screenshot: result.screenshot,
@@ -150,22 +173,25 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** GET /api/stylemd/by-slug/:slug — retrieve a cached run by its human-readable slug */
+/** GET /api/stylemd/by-slug/:slug — retrieve a cached run by its human-readable slug or runId */
 export async function getBySlug(req: Request, res: Response): Promise<void> {
   try {
     const { slug } = req.params as { slug: string };
     await connectMongo();
 
     // Look up by slug first, then fall back to runId for backwards compat
+    // This supports: human-readable slugs (youtube), URL-safe slugs (youtube-2), and runIds (stylemd_1234567)
     const doc = await StyleMdRun.findOne({
       $or: [{ slug }, { runId: slug }],
-    }).lean();
+    }).lean<StyleMdRunDoc>();
 
     if (!doc) {
+      console.warn(`[getBySlug] No run found for slug/runId: ${slug}`);
       res.status(404).json({ ok: false, error: `No run found for slug: ${slug}` });
       return;
     }
 
+    console.log(`[getBySlug] Found run for slug/runId: ${slug}, runId: ${doc.runId}`);
     res.json({
       ok: true,
       data: {
@@ -182,8 +208,19 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
       },
     });
   } catch (err) {
+    console.error("[getBySlug] error:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+interface StyleMdRunSummary {
+  url: string;
+  slug?: string;
+  runId?: string;
+  provider?: string;
+  model?: string;
+  status?: string;
+  createdAt?: Date;
 }
 
 /** GET /api/stylemd/runs — list all completed StyleMD runs for the library */
@@ -193,7 +230,7 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
     const runs = await StyleMdRun.find({})
       .sort({ createdAt: -1 })
       .select("url slug runId provider model status createdAt")
-      .lean();
+      .lean<StyleMdRunSummary[]>();
 
     res.json({
       ok: true,

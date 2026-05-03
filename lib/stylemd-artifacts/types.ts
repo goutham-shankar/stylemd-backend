@@ -1,4 +1,4 @@
-export const STYLEMD_PIPELINE_STAGES = ["capture", "extract", "dedup", "curate", "styleguide", "showcase"] as const;
+export const STYLEMD_PIPELINE_STAGES = ["capture", "extract", "dedup", "curate", "styleguide"] as const;
 
 export type StyleMdPipelineStageName = (typeof STYLEMD_PIPELINE_STAGES)[number];
 export type StyleMdProvider = "claude" | "kimi";

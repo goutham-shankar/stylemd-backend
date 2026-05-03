@@ -42,6 +42,8 @@ import {
   type StyleMdRunSummary,
 } from "@/lib/stylemd-artifacts/types";
 import type { PlaygroundEvent } from "@/lib/types/stylemdEvents";
+import { connectMongo } from "@/lib/mongodb";
+import { ScrapedData } from "@/backend/src/models/ScrapedData";
 
 type StyleMdPipelineEventPayload = {
   type: PlaygroundEvent["type"];
@@ -489,6 +491,24 @@ let screenshotUrlPath = "";
       completedAt: summary.completedAt,
       warnings: summary.warnings,
     });
+
+    // Save styleMd content to scraped_data collection
+    try {
+      await connectMongo();
+      await ScrapedData.findOneAndUpdate(
+        { url },
+        {
+          url,
+          contentText: styleMdContent,
+          createdAt: new Date(),
+        },
+        { upsert: true, new: true }
+      );
+    } catch (dbErr) {
+      const errMsg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+      console.warn(`[SIMPLE PIPELINE] Failed to save styleMd to database: ${errMsg}`);
+      // Don't throw - continue even if DB save fails
+    }
 
     return {
       runId: runIdValue,

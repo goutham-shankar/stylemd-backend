@@ -5,7 +5,7 @@ const StyleMdRunSchema = new mongoose.Schema({
   slug: { type: String, unique: true, index: true },
   provider: { type: String, default: "kimi" },
   model: { type: String },
-  runId: { type: String },
+  runId: { type: String, index: true },
   styleMd: { type: String },
   screenshotUrl: { type: String },
   screenshot: { type: String },
