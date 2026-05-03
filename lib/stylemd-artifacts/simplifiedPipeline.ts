@@ -27,6 +27,7 @@ import {
   runExtractStage,
 } from "@/lib/stylemd-artifacts/stages";
 import { runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
+import { markStyleMdRunPendingInMongo, persistStyleMdAfterGeneration } from "@/lib/services/persistStyleMdMongo";
 import {
   resolveStyleMdRuntimeConfig,
   type StyleMdRuntimeConfig,
@@ -104,6 +105,19 @@ export async function runSimplifiedStyleMdPipeline(
   const abortController = new AbortController();
   const signal = abortController.signal;
   const runtime = resolveStyleMdRuntimeConfig(provider);
+
+  // Register the run as pending in MongoDB immediately so polling can resolve
+  // the runId before the pipeline finishes.
+  try {
+    await markStyleMdRunPendingInMongo({
+      url,
+      runId: runIdValue,
+      provider: runtime.provider,
+      model: runtime.model,
+    });
+  } catch (err) {
+    console.warn("[simplifiedPipeline] Failed to mark run pending in MongoDB:", err instanceof Error ? err.message : String(err));
+  }
 
   const config = mergeConfig({});
 
@@ -434,19 +448,17 @@ export async function runSimplifiedStyleMdPipeline(
       styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
     }
 
-let screenshotUrlPath = "";
+    let screenshotUrlPath = "";
     let screenshotBase64 = "";
     try {
       const screenshotPath = join(getStyleMdRunDir(runIdValue), "full_screenshot.png");
       screenshotUrlPath = `/styleguide-files/${runIdValue}/full_screenshot.png`;
-      // Convert screenshot to base64
       screenshotBase64 = await fileToBase64(screenshotPath, "image/png");
       console.log(`[SIMPLE PIPELINE] Screenshot saved as base64 (size: ${screenshotBase64.length} bytes)`);
     } catch (err) {
       screenshotUrlPath = "";
       screenshotBase64 = "";
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${errMsg}`);
+      console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const summary: StyleMdRunSummary = {
@@ -479,6 +491,25 @@ let screenshotUrlPath = "";
       artifacts: mergeArtifact(state.artifacts, summaryArtifact),
     });
     await publishState();
+
+    // Persist to MongoDB BEFORE emitting the completed event so the frontend
+    // can use data.styleMd from the SSE payload and the first DB poll already
+    // finds a completed record.
+    try {
+      await persistStyleMdAfterGeneration({
+        url,
+        runId: runIdValue,
+        provider: runtime.provider,
+        model: runtime.model,
+        styleMd: styleMdContent,
+        screenshotUrl: screenshotUrlPath,
+        screenshot: screenshotBase64,
+        runStatus: summary.status,
+      });
+    } catch (dbErr) {
+      console.warn(`[simplifiedPipeline] MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+    }
+
     await emitAndLog({
       type: "stylemd_run_completed",
       source: "system",
@@ -487,7 +518,13 @@ let screenshotUrlPath = "";
       model: runtime.model,
       status: summary.status,
       completedAt: summary.completedAt,
+      styleMd: styleMdContent,
       warnings: summary.warnings,
+      showcase: {
+        available: false,
+        canonicalUrl: "",
+        latestUrl: "",
+      },
     });
 
     return {

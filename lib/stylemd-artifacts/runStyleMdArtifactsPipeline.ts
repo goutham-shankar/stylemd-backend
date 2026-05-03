@@ -526,26 +526,14 @@ export async function runStyleMdArtifactsPipeline(
       artifacts: mergeArtifact(state.artifacts, summaryArtifact),
     });
     await publishState();
-    await emitAndLog({
-      type: "stylemd_run_completed",
-      source: "system",
-      runId,
-      provider: runtime.provider,
-      model: runtime.model,
-      status: summary.status,
-      completedAt: summary.completedAt,
-      warnings: summary.warnings,
-      showcase: {
-        available: summary.showcase.available,
-        canonicalUrl: summary.showcase.canonicalUrl,
-        latestUrl: summary.showcase.latestUrl,
-      },
-    });
 
+    // Read styleMd and persist to DB BEFORE emitting the completed event so the
+    // frontend can use data.styleMd from the SSE payload and so that the first
+    // DB poll after the event already finds a completed record.
+    let styleMdContent = "";
     try {
       const styleMdPath =
         styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runId), "style.md");
-      let styleMdContent = "";
       try {
         styleMdContent = await readFile(styleMdPath, "utf-8");
       } catch {
@@ -576,6 +564,23 @@ export async function runStyleMdArtifactsPipeline(
         `[runStyleMdArtifactsPipeline] MongoDB persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`,
       );
     }
+
+    await emitAndLog({
+      type: "stylemd_run_completed",
+      source: "system",
+      runId,
+      provider: runtime.provider,
+      model: runtime.model,
+      status: summary.status,
+      completedAt: summary.completedAt,
+      styleMd: styleMdContent,
+      warnings: summary.warnings,
+      showcase: {
+        available: summary.showcase.available,
+        canonicalUrl: summary.showcase.canonicalUrl,
+        latestUrl: summary.showcase.latestUrl,
+      },
+    });
 
     return {
       ...summary,
