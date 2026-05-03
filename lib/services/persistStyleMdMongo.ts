@@ -103,7 +103,19 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
 
   await connectMongo();
 
-  const slug = input.slug ?? (await ensureUniqueSlug(slugFromUrl(canonUrl)));
+  // Reuse existing record's slug (e.g., set by markStyleMdRunPendingInMongo) to prevent
+  // ensureUniqueSlug from generating a new suffix ("levainbakery-2") for a URL that
+  // already has a pending record with slug "levainbakery".
+  const existingSlug =
+    input.slug == null
+      ? (
+          await StyleMdRun.findOne({ url: { $in: pageUrlVariantsForLookup(canonUrl) } })
+            .select("slug")
+            .lean<{ slug?: string } | null>()
+        )?.slug?.trim() ?? ""
+      : "";
+
+  const slug = input.slug ?? (existingSlug || (await ensureUniqueSlug(slugFromUrl(canonUrl))));
   const now = new Date();
   const hasStyleMd = Boolean(styleMd);
   const hasScreenshot = Boolean(screenshot) || Boolean(screenshotUrl);
