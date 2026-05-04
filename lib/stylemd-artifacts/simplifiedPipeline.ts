@@ -340,7 +340,7 @@ export async function runSimplifiedStyleMdPipeline(
         signal,
       });
       fullScreenshotPath = capture.result.fullScreenshotPath;
-      console.log(`✅ [SIMPLE PIPELINE] Stage 1 complete: captured ${capture.result.viewport.width}x${capture.result.viewport.height}px`);
+      console.log(`✅ [SIMPLE PIPELINE] Stage 1 complete: viewport ${capture.result.viewport.width}x${capture.result.viewport.height}px, full page height ${capture.result.documentHeight}px`);
 
       registerArtifacts(capture.artifacts);
       await publishState();
