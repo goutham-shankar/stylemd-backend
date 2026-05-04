@@ -909,6 +909,22 @@ export async function runCaptureStage(input: {
 
   const viewport = page.viewportSize() ?? { width: 1366, height: 900 };
 
+  // Inject a style that overrides overflow/height restrictions on html and body.
+  // Many sites set these via stylesheets (not inline), which causes fullPage:true
+  // to only capture the visible viewport. This style tag is cleaned up after capture.
+  const FULL_PAGE_STYLE_ID = "__stylemd_full_page_capture__";
+  await page.evaluate((styleId) => {
+    if (!document.getElementById(styleId)) {
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent =
+        "html, body { overflow: visible !important; height: auto !important; max-height: none !important; }";
+      document.head.appendChild(style);
+    }
+  }, FULL_PAGE_STYLE_ID);
+
+  await page.waitForTimeout(250);
+
   const documentHeight = await page.evaluate(() => {
     // @ts-ignore
     const __name = (t, v) => t;
@@ -920,11 +936,25 @@ export async function runCaptureStage(input: {
     );
   });
 
+  // Resize the viewport to the full document height so that content relying on
+  // viewport-relative sizing (e.g. height:100vh sections below the fold) renders
+  // correctly before Playwright stitches the full-page screenshot.
+  const fullPageHeight = Math.max(documentHeight, viewport.height);
+  const cappedHeight = Math.min(fullPageHeight, 30_000);
+  await page.setViewportSize({ width: viewport.width, height: cappedHeight });
+  await page.waitForTimeout(200);
+
   const screenshot = await page.screenshot({
     fullPage: true,
     type: "png",
     animations: "disabled",
   });
+
+  // Restore original viewport and remove the injected style.
+  await page.setViewportSize(viewport);
+  await page.evaluate((styleId) => {
+    document.getElementById(styleId)?.remove();
+  }, FULL_PAGE_STYLE_ID);
 
   const downsampledScreenshot = await downsampleScreenshot(screenshot);
   const screenshotArtifact = await writeStyleMdImage(runId, "full_screenshot.png", downsampledScreenshot);
