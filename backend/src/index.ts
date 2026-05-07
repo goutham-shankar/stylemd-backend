@@ -1,17 +1,7 @@
 /**
  * Backend entry point.
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const dotenv = require("dotenv") as typeof import("dotenv");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const path = require("node:path") as typeof import("node:path");
-
-dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
-dotenv.config({ path: path.resolve(__dirname, "../../.env.local") });
-// Support running from project root (standard for PM2/production)
-dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
-dotenv.config({ path: path.resolve(process.cwd(), "backend/.env.local") });
-
+import "dotenv/config";
 import mongoose from "mongoose";
 import { connectDB } from "../../lib/mongodb";
 import { createApp } from "./app";

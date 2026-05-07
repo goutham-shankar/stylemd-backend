@@ -1,7 +1,4 @@
-const dotenv = require("dotenv");
-const path = require("node:path");
-dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
-dotenv.config({ path: path.resolve(__dirname, "../../.env.local") });
+import "dotenv/config";
 import mongoose from "mongoose";
 import { connectDB, safeWrite } from "../lib/mongodb";
 import { StyleMdRun } from "./src/models/StyleMdRun";

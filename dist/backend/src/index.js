@@ -6,15 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 /**
  * Backend entry point.
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const dotenv = require("dotenv");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const path = require("node:path");
-dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
-dotenv.config({ path: path.resolve(__dirname, "../../.env.local") });
-// Support running from project root (standard for PM2/production)
-dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
-dotenv.config({ path: path.resolve(process.cwd(), "backend/.env.local") });
+require("dotenv/config");
 const mongoose_1 = __importDefault(require("mongoose"));
 const mongodb_1 = require("../../lib/mongodb");
 const app_1 = require("./app");
