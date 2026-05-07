@@ -129,18 +129,20 @@ export function isAbortError(error: unknown): boolean {
 }
 
 export function getPlaywrightLaunchOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+
   const options: any = {
     headless: true,
     args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-blink-features=AutomationControlled",
     ],
   };
 
-  if (process.env.PLAYWRIGHT_CHROME_PATH) {
-    options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH;
+  // If in production or explicit path provided, use system Chrome
+  if (isProduction || process.env.PLAYWRIGHT_CHROME_PATH) {
+    options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+    options.args.push("--no-sandbox", "--disable-setuid-sandbox");
   }
 
   return options;
