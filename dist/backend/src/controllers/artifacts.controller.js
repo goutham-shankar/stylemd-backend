@@ -4,7 +4,7 @@ exports.getArtifact = getArtifact;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
 const zod_1 = require("zod");
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
+const artifacts_1 = require("../../../lib/stylemd-artifacts/artifacts");
 const querySchema = zod_1.z.object({
     runId: zod_1.z.string().min(1),
     path: zod_1.z.string().min(1),
@@ -50,17 +50,17 @@ async function getArtifact(req, res) {
         }
         if (IMAGE_EXTENSIONS.has(ext)) {
             const rawUrl = `/api/stylemd-artifacts/artifact?runId=${encodeURIComponent(parsed.runId)}&path=${encodeURIComponent(parsed.path)}&mode=raw`;
-            res.json({ ok: true, previewType: "image", rawUrl, mimeType });
+            res.json({ ok: true, data: { previewType: "image", rawUrl, mimeType } });
             return;
         }
         if (TEXT_EXTENSIONS.has(ext)) {
             const rawText = await (0, promises_1.readFile)(artifactPath, "utf8");
             const truncated = rawText.length > PREVIEW_TEXT_MAX_CHARS;
             const content = truncated ? `${rawText.slice(0, PREVIEW_TEXT_MAX_CHARS)}\n...[truncated]` : rawText;
-            res.json({ ok: true, previewType: "text", mimeType, truncated, content });
+            res.json({ ok: true, data: { previewType: "text", mimeType, truncated, content } });
             return;
         }
-        res.json({ ok: true, previewType: "unsupported", mimeType, message: "Preview not available." });
+        res.json({ ok: true, data: { previewType: "unsupported", mimeType, message: "Preview not available." } });
     }
     catch (err) {
         res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });

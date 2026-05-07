@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.router = void 0;
 const express_1 = require("express");
 const session_1 = require("./session");
-const stylemdRuns_1 = require("./stylemdRuns");
 const artifacts_1 = require("./artifacts");
 const stylemd_1 = require("./stylemd");
 const scrapedData_1 = require("./scrapedData");
@@ -14,7 +13,6 @@ exports.router.get("/health", (_req, res) => {
     res.json({ ok: true, status: "running" });
 });
 exports.router.use("/api/session", session_1.sessionRouter);
-exports.router.use("/api/stylemd-artifacts", stylemdRuns_1.stylemdRunsRouter);
 exports.router.use("/api/stylemd-artifacts", artifacts_1.artifactsRouter);
 exports.router.use("/api/stylemd", stylemd_1.stylemdRouter);
 exports.router.use("/api/stylemd", download_1.downloadRouter);

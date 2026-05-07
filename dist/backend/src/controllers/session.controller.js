@@ -2,8 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getSessionEvents = getSessionEvents;
 exports.resetSession = resetSession;
-const stylemdEventStream_1 = require("@/lib/stream/stylemdEventStream");
-const stylemdSessionStore_1 = require("@/lib/store/stylemdSessionStore");
+const stylemdEventStream_1 = require("../../../lib/stream/stylemdEventStream");
+const stylemdSessionStore_1 = require("../../../lib/store/stylemdSessionStore");
 async function getSessionEvents(_req, res) {
     const webResponse = (0, stylemdEventStream_1.createSessionEventStreamResponse)();
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -39,7 +39,7 @@ async function getSessionEvents(_req, res) {
 async function resetSession(_req, res) {
     try {
         (0, stylemdSessionStore_1.resetStyleMdSessionState)("Session reset by user.");
-        res.json({ ok: true });
+        res.json({ ok: true, data: null });
     }
     catch (err) {
         const message = err instanceof Error ? err.message : String(err);

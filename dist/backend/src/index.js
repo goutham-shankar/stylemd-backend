@@ -12,21 +12,18 @@ const dotenv = require("dotenv");
 const path = require("node:path");
 dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
 dotenv.config({ path: path.resolve(__dirname, "../../.env.local") });
+// Support running from project root (standard for PM2/production)
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
+dotenv.config({ path: path.resolve(process.cwd(), "backend/.env.local") });
 const mongoose_1 = __importDefault(require("mongoose"));
+const mongodb_1 = require("../../lib/mongodb");
 const app_1 = require("./app");
 const env_1 = require("./config/env");
 async function start() {
     console.log(`[startup] booting StyleMD standalone backend on port ${env_1.config.port}`);
     console.log(`[startup] environment: ${env_1.config.nodeEnv}`);
-    console.log(`[startup] connecting to MongoDB dbName=${env_1.config.mongoDbName}`);
     try {
-        await mongoose_1.default.connect(env_1.config.mongoUri, {
-            dbName: env_1.config.mongoDbName,
-            serverSelectionTimeoutMS: 60000,
-            socketTimeoutMS: 45000,
-            family: 4,
-        });
-        console.log("[startup] connected to MongoDB");
+        await (0, mongodb_1.connectDB)();
     }
     catch (err) {
         console.error("[startup] failed to connect to MongoDB", err);

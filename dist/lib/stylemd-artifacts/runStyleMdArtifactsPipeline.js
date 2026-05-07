@@ -4,16 +4,16 @@ exports.runStyleMdArtifactsPipeline = runStyleMdArtifactsPipeline;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
 const playwright_1 = require("playwright");
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
-const stylemdSessionStore_1 = require("@/lib/store/stylemdSessionStore");
-const helpers_1 = require("@/lib/stylemd-artifacts/helpers");
-const stages_1 = require("@/lib/stylemd-artifacts/stages");
-const curation_1 = require("@/lib/stylemd-artifacts/curation");
-const styleguide_1 = require("@/lib/stylemd-artifacts/styleguide");
-const provider_1 = require("@/lib/stylemd-artifacts/provider");
-const types_1 = require("@/lib/stylemd-artifacts/types");
-const fileToBase64_1 = require("@/lib/utils/fileToBase64");
-const persistStyleMdMongo_1 = require("@/lib/services/persistStyleMdMongo");
+const artifacts_1 = require("../../lib/stylemd-artifacts/artifacts");
+const stylemdSessionStore_1 = require("../../lib/store/stylemdSessionStore");
+const helpers_1 = require("../../lib/stylemd-artifacts/helpers");
+const stages_1 = require("../../lib/stylemd-artifacts/stages");
+const curation_1 = require("../../lib/stylemd-artifacts/curation");
+const styleguide_1 = require("../../lib/stylemd-artifacts/styleguide");
+const provider_1 = require("../../lib/stylemd-artifacts/provider");
+const types_1 = require("../../lib/stylemd-artifacts/types");
+const fileToBase64_1 = require("../../lib/utils/fileToBase64");
+const persistStyleMdMongo_1 = require("../../lib/services/persistStyleMdMongo");
 function mergeConfig(config) {
     return {
         ...types_1.DEFAULT_STYLEMD_PIPELINE_CONFIG,

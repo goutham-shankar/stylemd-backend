@@ -11,7 +11,7 @@ exports.updateStageState = updateStageState;
 exports.assertNotAborted = assertNotAborted;
 exports.errorToMessage = errorToMessage;
 exports.isAbortError = isAbortError;
-const types_1 = require("@/lib/stylemd-artifacts/types");
+const types_1 = require("../../lib/stylemd-artifacts/types");
 class StyleMdPipelineAbortedError extends Error {
     constructor(message = "Style artifact pipeline canceled") {
         super(message);

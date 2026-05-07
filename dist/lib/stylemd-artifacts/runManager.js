@@ -6,10 +6,10 @@ exports.cancelActiveStyleMdRun = cancelActiveStyleMdRun;
 exports.getStyleMdRunSummary = getStyleMdRunSummary;
 exports.listStyleMdRunSummaries = listStyleMdRunSummaries;
 exports.getLatestStyleMdShowcaseRunSummary = getLatestStyleMdShowcaseRunSummary;
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
-const helpers_1 = require("@/lib/stylemd-artifacts/helpers");
-const provider_1 = require("@/lib/stylemd-artifacts/provider");
-const runStyleMdArtifactsPipeline_1 = require("@/lib/stylemd-artifacts/runStyleMdArtifactsPipeline");
+const artifacts_1 = require("../../lib/stylemd-artifacts/artifacts");
+const helpers_1 = require("../../lib/stylemd-artifacts/helpers");
+const provider_1 = require("../../lib/stylemd-artifacts/provider");
+const runStyleMdArtifactsPipeline_1 = require("../../lib/stylemd-artifacts/runStyleMdArtifactsPipeline");
 const GLOBAL_KEY = "__stylemd_artifact_pipeline_manager__";
 function withShowcaseDefaults(summary) {
     const showcase = (summary.showcase ?? {});

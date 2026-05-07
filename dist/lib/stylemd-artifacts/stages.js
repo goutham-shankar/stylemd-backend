@@ -12,8 +12,8 @@ const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
 const sharp_1 = __importDefault(require("sharp"));
 const ssim_js_1 = require("ssim.js");
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
-const helpers_1 = require("@/lib/stylemd-artifacts/helpers");
+const artifacts_1 = require("../../lib/stylemd-artifacts/artifacts");
+const helpers_1 = require("../../lib/stylemd-artifacts/helpers");
 const FULL_WIDTH_TAGS = [
     "header",
     "section",
@@ -692,16 +692,89 @@ async function runCaptureStage(input) {
     await runOverlayHygiene(page, signal);
     (0, helpers_1.assertNotAborted)(signal);
     const viewport = page.viewportSize() ?? { width: 1366, height: 900 };
+    // Remove overflow/height restrictions that prevent full-page capture.
+    // Covers three patterns:
+    //   1. html/body constrained via stylesheet (overflow:hidden, height:100vh)
+    //   2. SPA root containers (e.g. #app, #root) with height:100vh + overflow-y:scroll
+    //   3. Any other near-root scroll container that hides content below the fold
+    const FULL_PAGE_STYLE_ID = "__stylemd_full_page_capture__";
+    const FULL_PAGE_UNLOCK_ATTR = "data-stylemd-unlocked";
+    await page.evaluate(({ styleId, unlockAttr }) => {
+        // Stylesheet-level fix for html/body.
+        if (!document.getElementById(styleId)) {
+            const style = document.createElement("style");
+            style.id = styleId;
+            style.textContent =
+                "html, body { overflow: visible !important; height: auto !important; max-height: none !important; }";
+            document.head.appendChild(style);
+        }
+        // Remove inline overflow lock sometimes added by JS modal/scroll libraries.
+        for (const el of [document.documentElement, document.body]) {
+            el.style.removeProperty("overflow");
+            el.style.removeProperty("overflow-y");
+            el.style.removeProperty("height");
+            el.style.removeProperty("max-height");
+        }
+        // Unroll near-root scroll containers (SPAs like Next.js / React that wrap
+        // the whole page in a height-constrained div with overflow scroll/auto).
+        const candidates = Array.from(document.body?.children ?? []);
+        // Also check one level deeper to catch patterns like body > #__next > main.
+        const secondLevel = [];
+        for (const c of candidates) {
+            for (const child of Array.from(c.children)) {
+                secondLevel.push(child);
+            }
+        }
+        for (const el of [...candidates, ...secondLevel]) {
+            if (el.getAttribute(unlockAttr))
+                continue;
+            const computed = window.getComputedStyle(el);
+            const overflowY = computed.overflowY;
+            const isScrollContainer = overflowY === "scroll" || overflowY === "auto";
+            const hasHiddenContent = el.scrollHeight > el.clientHeight + 50;
+            if (isScrollContainer && hasHiddenContent) {
+                // Save originals so we can restore after capture.
+                el.setAttribute(unlockAttr, "1");
+                el.dataset.stylemdOrigOverflow = el.style.overflowY;
+                el.dataset.stylemdOrigHeight = el.style.height;
+                el.dataset.stylemdOrigMaxHeight = el.style.maxHeight;
+                el.style.setProperty("overflow-y", "visible", "important");
+                el.style.setProperty("height", "auto", "important");
+                el.style.setProperty("max-height", "none", "important");
+            }
+        }
+    }, { styleId: FULL_PAGE_STYLE_ID, unlockAttr: FULL_PAGE_UNLOCK_ATTR });
+    await page.waitForTimeout(300);
     const documentHeight = await page.evaluate(() => {
         // @ts-ignore
         const __name = (t, v) => t;
         return Math.max(document.body?.scrollHeight ?? 0, document.documentElement?.scrollHeight ?? 0, document.body?.offsetHeight ?? 0, document.documentElement?.offsetHeight ?? 0);
     });
+    // Resize the viewport to the full document height so content that uses
+    // viewport-relative units (height:100vh) renders correctly everywhere.
+    const fullPageHeight = Math.max(documentHeight, viewport.height);
+    const cappedHeight = Math.min(fullPageHeight, 30000);
+    await page.setViewportSize({ width: viewport.width, height: cappedHeight });
+    await page.waitForTimeout(250);
     const screenshot = await page.screenshot({
         fullPage: true,
         type: "png",
         animations: "disabled",
     });
+    // Restore original viewport and clean up all injected changes.
+    await page.setViewportSize(viewport);
+    await page.evaluate(({ styleId, unlockAttr }) => {
+        document.getElementById(styleId)?.remove();
+        for (const el of Array.from(document.querySelectorAll(`[${unlockAttr}]`))) {
+            el.removeAttribute(unlockAttr);
+            el.style.overflowY = el.dataset.stylemdOrigOverflow ?? "";
+            el.style.height = el.dataset.stylemdOrigHeight ?? "";
+            el.style.maxHeight = el.dataset.stylemdOrigMaxHeight ?? "";
+            delete el.dataset.stylemdOrigOverflow;
+            delete el.dataset.stylemdOrigHeight;
+            delete el.dataset.stylemdOrigMaxHeight;
+        }
+    }, { styleId: FULL_PAGE_STYLE_ID, unlockAttr: FULL_PAGE_UNLOCK_ATTR });
     const downsampledScreenshot = await downsampleScreenshot(screenshot);
     const screenshotArtifact = await (0, artifacts_1.writeStyleMdImage)(runId, "full_screenshot.png", downsampledScreenshot);
     return {

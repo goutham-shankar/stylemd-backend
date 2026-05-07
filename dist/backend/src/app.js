@@ -7,7 +7,7 @@ exports.createApp = createApp;
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const node_path_1 = __importDefault(require("node:path"));
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
+const artifacts_1 = require("../../lib/stylemd-artifacts/artifacts");
 const index_1 = require("./routes/index");
 const errorHandler_1 = require("./middleware/errorHandler");
 function createApp() {

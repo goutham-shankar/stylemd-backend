@@ -5,8 +5,8 @@ exports.cancelRun = cancelRun;
 exports.getRunSummary = getRunSummary;
 exports.listRuns = listRuns;
 const zod_1 = require("zod");
-const provider_1 = require("@/lib/stylemd-artifacts/provider");
-const runManager_1 = require("@/lib/stylemd-artifacts/runManager");
+const provider_1 = require("../../../lib/stylemd-artifacts/provider");
+const runManager_1 = require("../../../lib/stylemd-artifacts/runManager");
 const startRunSchema = zod_1.z.object({
     url: zod_1.z.string().url(),
     provider: zod_1.z.enum(["claude", "kimi"]).optional().default("kimi"),

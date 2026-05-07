@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSessionEventStreamResponse = createSessionEventStreamResponse;
-const stylemdSessionStore_1 = require("@/lib/store/stylemdSessionStore");
+const stylemdSessionStore_1 = require("../../lib/store/stylemdSessionStore");
 const encoder = new TextEncoder();
 function serializeEnvelope(envelope) {
     return encoder.encode(`data: ${JSON.stringify(envelope)}\n\n`);

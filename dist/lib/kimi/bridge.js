@@ -6,8 +6,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.queryWithKimiBridge = queryWithKimiBridge;
 exports.getKimiOnlyConfig = getKimiOnlyConfig;
-const curation_1 = require("@/lib/kimi/curation");
-const styleguide_1 = require("@/lib/kimi/styleguide");
+const curation_1 = require("../../lib/kimi/curation");
+const styleguide_1 = require("../../lib/kimi/styleguide");
 /**
  * Query using Kimi AI with hook callbacks
  * Compatible with existing Claude SDK interface

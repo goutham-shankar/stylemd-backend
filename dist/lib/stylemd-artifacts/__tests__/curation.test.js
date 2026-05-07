@@ -7,8 +7,8 @@ const strict_1 = __importDefault(require("node:assert/strict"));
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
 const node_test_1 = __importDefault(require("node:test"));
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
-const curation_1 = require("@/lib/stylemd-artifacts/curation");
+const artifacts_1 = require("../../../lib/stylemd-artifacts/artifacts");
+const curation_1 = require("../../../lib/stylemd-artifacts/curation");
 function makeRunId() {
     return `stylemd_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }

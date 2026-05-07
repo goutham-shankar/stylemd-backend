@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runKimiCurationQuery = runKimiCurationQuery;
-const client_1 = require("@/lib/kimi/client");
+const client_1 = require("../../lib/kimi/client");
 function isRateLimitError(error) {
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();

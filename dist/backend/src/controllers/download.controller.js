@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.downloadStyleguideV2 = downloadStyleguideV2;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
-const artifacts_1 = require("@/lib/stylemd-artifacts/artifacts");
+const artifacts_1 = require("../../../lib/stylemd-artifacts/artifacts");
 function rewriteFontUrlsToAbsolute(html, runId) {
     const fontUrlRegex = /url\(\s*(["']?)([^"')]*\.(?:woff2?|ttf|otf|eot))\1\s*\)/gi;
     return html.replace(fontUrlRegex, (_match, quote, fontPath) => {

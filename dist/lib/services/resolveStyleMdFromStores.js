@@ -1,9 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveStyleMdForRunDoc = resolveStyleMdForRunDoc;
-const ScrapedData_1 = require("@/backend/src/models/ScrapedData");
-const pageUrlCanonical_1 = require("@/lib/services/pageUrlCanonical");
-const styleMarkdownSanitize_1 = require("@/lib/services/styleMarkdownSanitize");
+const ScrapedData_1 = require("../../backend/src/models/ScrapedData");
+const pageUrlCanonical_1 = require("../../lib/services/pageUrlCanonical");
+const styleMarkdownSanitize_1 = require("../../lib/services/styleMarkdownSanitize");
 /**
  * Prefer `stylemd_runs.styleMd`; if empty, mirror `scraped_data.contentText` (URL variants).
  */

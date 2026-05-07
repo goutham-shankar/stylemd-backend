@@ -5,8 +5,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const node_test_1 = __importDefault(require("node:test"));
 const strict_1 = __importDefault(require("node:assert/strict"));
-const pageUrlCanonical_1 = require("@/lib/services/pageUrlCanonical");
-const styleMarkdownSanitize_1 = require("@/lib/services/styleMarkdownSanitize");
+const pageUrlCanonical_1 = require("../../../lib/services/pageUrlCanonical");
+const styleMarkdownSanitize_1 = require("../../../lib/services/styleMarkdownSanitize");
 (0, node_test_1.default)("canonicalPageUrl lowers host, strips www, trims slash on non-root path", () => {
     strict_1.default.equal((0, pageUrlCanonical_1.canonicalPageUrl)("HTTPS://WWW.Example.COM/foo/"), "https://example.com/foo");
     strict_1.default.equal((0, pageUrlCanonical_1.canonicalPageUrl)("https://levainbakery.com/"), "https://levainbakery.com/");
