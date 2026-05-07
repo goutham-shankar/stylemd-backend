@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
 import { NormalizedData } from "./normalize";
+import { getPlaywrightLaunchOptions } from "@/lib/stylemd-artifacts/helpers";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,7 +40,7 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
   let screenshotBase64: string | null = null;
 
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch(getPlaywrightLaunchOptions());
     const page = await browser.newPage();
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
 

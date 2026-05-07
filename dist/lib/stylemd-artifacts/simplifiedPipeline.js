@@ -226,10 +226,7 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
     let fullScreenshotPath = "";
     let screenshotBase64Var = "";
     try {
-        browser = await playwright_1.chromium.launch({
-            headless: true,
-            args: ["--disable-blink-features=AutomationControlled"],
-        });
+        browser = await playwright_1.chromium.launch((0, helpers_1.getPlaywrightLaunchOptions)());
         context = await browser.newContext({
             viewport: {
                 width: config.viewport.width,
@@ -332,10 +329,7 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
             styleguideStageResult = await runStage("styleguide", async () => {
                 try {
                     (0, helpers_1.assertNotAborted)(signal);
-                    browser = await playwright_1.chromium.launch({
-                        headless: true,
-                        args: ["--disable-blink-features=AutomationControlled"],
-                    });
+                    browser = await playwright_1.chromium.launch((0, helpers_1.getPlaywrightLaunchOptions)());
                     context = await browser.newContext({
                         viewport: {
                             width: config.viewport.width,

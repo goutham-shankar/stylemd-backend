@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.scrape = scrape;
 const cheerio = __importStar(require("cheerio"));
 const playwright_1 = require("playwright");
+const helpers_1 = require("../../../lib/stylemd-artifacts/helpers");
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -67,7 +68,7 @@ async function scrapeOnce(url) {
     let browser = null;
     let screenshotBase64 = null;
     try {
-        browser = await playwright_1.chromium.launch({ headless: true });
+        browser = await playwright_1.chromium.launch((0, helpers_1.getPlaywrightLaunchOptions)());
         const page = await browser.newPage();
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
         // Take JPEG screenshot entirely in-memory — no file paths, no disk writes

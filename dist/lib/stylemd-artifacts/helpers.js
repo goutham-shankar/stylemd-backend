@@ -11,6 +11,7 @@ exports.updateStageState = updateStageState;
 exports.assertNotAborted = assertNotAborted;
 exports.errorToMessage = errorToMessage;
 exports.isAbortError = isAbortError;
+exports.getPlaywrightLaunchOptions = getPlaywrightLaunchOptions;
 const types_1 = require("../../lib/stylemd-artifacts/types");
 class StyleMdPipelineAbortedError extends Error {
     constructor(message = "Style artifact pipeline canceled") {
@@ -105,4 +106,19 @@ function isAbortError(error) {
         return name.includes("abort") || message.includes("abort") || message.includes("cancel");
     }
     return false;
+}
+function getPlaywrightLaunchOptions() {
+    const options = {
+        headless: true,
+        args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-blink-features=AutomationControlled",
+        ],
+    };
+    if (process.env.PLAYWRIGHT_CHROME_PATH) {
+        options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH;
+    }
+    return options;
 }

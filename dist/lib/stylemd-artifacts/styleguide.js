@@ -630,7 +630,7 @@ async function validateShowcaseHtmlInSandbox(input) {
     let nodeCount = 0;
     let hasPrimaryContent = false;
     let bodyTextLength = 0;
-    const browser = await playwright_1.chromium.launch({ headless: true });
+    const browser = await playwright_1.chromium.launch((0, helpers_1.getPlaywrightLaunchOptions)());
     try {
         const context = await browser.newContext({
             viewport: { width: 1366, height: 900 },

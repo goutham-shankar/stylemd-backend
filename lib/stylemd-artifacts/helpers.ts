@@ -127,3 +127,21 @@ export function isAbortError(error: unknown): boolean {
 
   return false;
 }
+
+export function getPlaywrightLaunchOptions() {
+  const options: any = {
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  };
+
+  if (process.env.PLAYWRIGHT_CHROME_PATH) {
+    options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH;
+  }
+
+  return options;
+}

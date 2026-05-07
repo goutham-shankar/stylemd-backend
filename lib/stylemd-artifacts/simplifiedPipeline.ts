@@ -21,6 +21,7 @@ import {
   assertNotAborted,
   createInitialRunState,
   errorToMessage,
+  getPlaywrightLaunchOptions,
   isAbortError,
   mergeArtifact,
   nowIso,
@@ -307,10 +308,7 @@ export async function runSimplifiedStyleMdPipeline(
   let screenshotBase64Var = "";
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    browser = await chromium.launch(getPlaywrightLaunchOptions());
     context = await browser.newContext({
       viewport: {
         width: config.viewport.width,
@@ -435,10 +433,7 @@ export async function runSimplifiedStyleMdPipeline(
       styleguideStageResult = await runStage("styleguide", async () => {
         try {
           assertNotAborted(signal);
-          browser = await chromium.launch({
-            headless: true,
-            args: ["--disable-blink-features=AutomationControlled"],
-          });
+          browser = await chromium.launch(getPlaywrightLaunchOptions());
           context = await browser.newContext({
             viewport: {
               width: config.viewport.width,

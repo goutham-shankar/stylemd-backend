@@ -19,6 +19,7 @@ import {
 import {
   assertNotAborted,
   errorToMessage,
+  getPlaywrightLaunchOptions,
   nowIso,
 } from "@/lib/stylemd-artifacts/helpers";
 import type {
@@ -975,7 +976,7 @@ async function validateShowcaseHtmlInSandbox(input: {
   let hasPrimaryContent = false;
   let bodyTextLength = 0;
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch(getPlaywrightLaunchOptions());
   try {
     const context = await browser.newContext({
       viewport: { width: 1366, height: 900 },
