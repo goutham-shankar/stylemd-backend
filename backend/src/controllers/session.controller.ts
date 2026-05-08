@@ -3,6 +3,8 @@ import { createSessionEventStreamResponse } from "@/lib/stream/stylemdEventStrea
 import { resetStyleMdSessionState } from "@/lib/store/stylemdSessionStore";
 
 export async function getSessionEvents(_req: Request, res: Response): Promise<void> {
+  console.log("[SSE] Client connected to /api/session/events");
+
   const webResponse = createSessionEventStreamResponse();
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
@@ -10,6 +12,11 @@ export async function getSessionEvents(_req: Request, res: Response): Promise<vo
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+
+  console.log("[SSE] Heartbeat started (15s interval)");
+  const heartbeat = setInterval(() => {
+    res.write(": ping\n\n");
+  }, 15000);
 
   const reader = (webResponse.body as ReadableStream<Uint8Array>).getReader();
 
@@ -31,6 +38,9 @@ export async function getSessionEvents(_req: Request, res: Response): Promise<vo
   };
 
   res.on("close", () => {
+    console.log("[SSE] Client disconnected");
+    clearInterval(heartbeat);
+    console.log("[SSE] Heartbeat cleaned up");
     reader.cancel().catch(() => undefined);
   });
 
