@@ -7,6 +7,7 @@ const mongodb_1 = require("../../lib/mongodb");
 const StyleMdRun_1 = require("../../backend/src/models/StyleMdRun");
 const pageUrlCanonical_1 = require("../../lib/services/pageUrlCanonical");
 const styleMarkdownSanitize_1 = require("../../lib/services/styleMarkdownSanitize");
+const helpers_1 = require("../../lib/stylemd-artifacts/helpers");
 /**
  * Generate a deterministic, stable slug from a URL.
  * Stable across runs, not unique per execution.
@@ -91,11 +92,30 @@ async function persistStyleMdAfterGeneration(input) {
         runData.brandAssets = input.brandAssets;
     }
     // 🟠 UPSERT BY runId
-    await (0, mongodb_1.safeWrite)(() => StyleMdRun_1.StyleMdRun.updateOne({ runId: input.runId }, { $set: runData, $setOnInsert: { createdAt: new Date() } }, { upsert: true }));
-    console.log("[persistStyleMdAfterGeneration] Persisted stylemd_runs (upsert)", {
-        runId: input.runId,
-        slug,
-        url: canonUrl
-    });
+    const approxBsonSize = JSON.stringify(runData).length;
+    (0, helpers_1.runIdLog)(input.runId, `[DEBUG] Persisting StyleMdRun. Approx BSON size: ${(approxBsonSize / 1024).toFixed(2)} KB. Fields: ${Object.keys(runData).join(", ")}`);
+    if (approxBsonSize > 14 * 1024 * 1024) {
+        (0, helpers_1.runIdLog)(input.runId, `[DEBUG] WARNING: Document is close to 16MB BSON limit (${(approxBsonSize / 1024 / 1024).toFixed(2)} MB)`, "warn");
+    }
+    try {
+        await (0, mongodb_1.safeWrite)(() => StyleMdRun_1.StyleMdRun.updateOne({ runId: input.runId }, { $set: runData, $setOnInsert: { createdAt: now } }, { upsert: true }));
+        (0, helpers_1.runIdLog)(input.runId, `[DEBUG] Successfully persisted StyleMdRun (upsert)`);
+        // Verification: Re-fetch to ensure no fields were stripped
+        const verified = await StyleMdRun_1.StyleMdRun.findOne({ runId: input.runId }).lean();
+        if (verified) {
+            const savedKeys = Object.keys(verified);
+            const missingKeys = Object.keys(runData).filter(k => !savedKeys.includes(k));
+            if (missingKeys.length > 0) {
+                (0, helpers_1.runIdLog)(input.runId, `[DEBUG] CRITICAL: Mongo/Mongoose stripped fields: ${missingKeys.join(", ")}`, "error");
+            }
+            else {
+                (0, helpers_1.runIdLog)(input.runId, `[DEBUG] Persistence verified. All keys present in DB.`);
+            }
+        }
+    }
+    catch (dbErr) {
+        (0, helpers_1.runIdLog)(input.runId, `[DEBUG] DB ERROR during upsert: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`, "error");
+        throw dbErr;
+    }
     return { slug };
 }

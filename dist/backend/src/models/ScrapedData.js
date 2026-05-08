@@ -27,5 +27,5 @@ const ScrapedSchema = new mongoose_1.default.Schema({
     rawHtml: { type: String, default: null },
     createdAt: { type: Date, default: () => new Date() },
     updatedAt: { type: Date, default: () => new Date() },
-}, { collection: "scraped_data" });
+}, { collection: "scraped_data", strict: false });
 exports.ScrapedData = mongoose_1.default.models["ScrapedData"] || mongoose_1.default.model("ScrapedData", ScrapedSchema);

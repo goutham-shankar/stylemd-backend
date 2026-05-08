@@ -14,7 +14,7 @@ const persistStyleMdMongo_1 = require("../../../lib/services/persistStyleMdMongo
 const pageUrlCanonical_1 = require("../../../lib/services/pageUrlCanonical");
 const resolveStyleMdFromStores_1 = require("../../../lib/services/resolveStyleMdFromStores");
 const StyleMdRun_1 = require("../models/StyleMdRun");
-const validation_1 = require("../utils/validation");
+const helpers_1 = require("../../../lib/stylemd-artifacts/helpers");
 const requestSchema = zod_1.z.object({
     url: zod_1.z.string().url(),
     provider: zod_1.z.enum(["claude", "kimi"]).optional().default("kimi"),
@@ -41,8 +41,13 @@ async function runStyleMd(req, res) {
         const existing = await StyleMdRun_1.StyleMdRun.findOne({ slug })
             .sort({ createdAt: -1 })
             .lean();
-        // STRICT validity check: return cached only if valid
-        const isValid = existing && existing.status !== "running" && existing.styleMd?.trim() && (0, validation_1.isValidScrapedRecord)(existing);
+        // 🟠 FIX: StyleMdRun does not have contentText/rawHtml, so isValidScrapedRecord fails.
+        // We check for status="completed" and non-empty styleMd.
+        const isValid = existing &&
+            existing.status === "completed" &&
+            existing.styleMd?.trim() &&
+            existing.images?.length;
+        console.log(`[STYLEMD] Checking cache for slug=${slug}. Found: ${existing ? "YES" : "NO"}, Valid: ${isValid ? "YES" : "NO"}`);
         if (isValid) {
             console.log(`[STYLEMD] cache-hit (valid) slug=${slug}`);
             res.json({
@@ -105,19 +110,21 @@ async function runStyleMd(req, res) {
         // Reset retry count on success (keyed by runId)
         await (0, mongodb_1.safeWrite)(() => StyleMdRun_1.StyleMdRun.updateOne({ runId: result.runId }, { $set: { retryCount: 0 } }));
         const now = new Date();
+        const responseData = {
+            url: canonUrl,
+            slug,
+            runId: result.runId,
+            provider,
+            model: result.model,
+            styleMd: result.styleMd,
+            images: result.screenshot ? [result.screenshot] : [],
+            status: "completed",
+            createdAt: now.toISOString(),
+        };
+        (0, helpers_1.runIdLog)(result.runId, `[DEBUG] Sending API response. Payload keys: ${Object.keys(responseData).join(", ")}. styleMdLength=${responseData.styleMd?.length ?? 0}`);
         res.json({
             ok: true,
-            data: {
-                url: canonUrl,
-                slug,
-                runId: result.runId,
-                provider,
-                model: result.model,
-                styleMd: result.styleMd,
-                images: result.screenshot ? [result.screenshot] : [],
-                status: "completed",
-                createdAt: now.toISOString(),
-            },
+            data: responseData,
         });
     }
     catch (err) {
@@ -153,6 +160,7 @@ async function getBySlug(req, res) {
             return;
         }
         const styleMd = await (0, resolveStyleMdFromStores_1.resolveStyleMdForRunDoc)(doc);
+        console.log(`[getBySlug] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback: ${!doc.styleMd})`);
         res.json({
             ok: true,
             data: {

@@ -5,6 +5,7 @@ import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageU
 import { stripLeadingModelPreamble } from "@/lib/services/styleMarkdownSanitize";
 import { scrape } from "@/backend/src/services/scraper";
 import { isValidScrapedRecord } from "@/backend/src/utils/validation";
+import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
 
 /**
  * Generate a deterministic, stable slug from a URL.
@@ -134,19 +135,38 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
   }
 
   // 🟠 UPSERT BY runId
-  await safeWrite(() =>
-    StyleMdRun.updateOne(
-      { runId: input.runId },
-      { $set: runData, $setOnInsert: { createdAt: new Date() } },
-      { upsert: true }
-    )
-  );
+  const approxBsonSize = JSON.stringify(runData).length;
+  runIdLog(input.runId, `[DEBUG] Persisting StyleMdRun. Approx BSON size: ${(approxBsonSize / 1024).toFixed(2)} KB. Fields: ${Object.keys(runData).join(", ")}`);
   
-  console.log("[persistStyleMdAfterGeneration] Persisted stylemd_runs (upsert)", { 
-    runId: input.runId, 
-    slug, 
-    url: canonUrl 
-  });
+  if (approxBsonSize > 14 * 1024 * 1024) {
+    runIdLog(input.runId, `[DEBUG] WARNING: Document is close to 16MB BSON limit (${(approxBsonSize / 1024 / 1024).toFixed(2)} MB)`, "warn");
+  }
+
+  try {
+    await safeWrite(() =>
+      StyleMdRun.updateOne(
+        { runId: input.runId },
+        { $set: runData, $setOnInsert: { createdAt: now } },
+        { upsert: true }
+      )
+    );
+    runIdLog(input.runId, `[DEBUG] Successfully persisted StyleMdRun (upsert)`);
+    
+    // Verification: Re-fetch to ensure no fields were stripped
+    const verified = await StyleMdRun.findOne({ runId: input.runId }).lean();
+    if (verified) {
+      const savedKeys = Object.keys(verified);
+      const missingKeys = Object.keys(runData).filter(k => !savedKeys.includes(k));
+      if (missingKeys.length > 0) {
+        runIdLog(input.runId, `[DEBUG] CRITICAL: Mongo/Mongoose stripped fields: ${missingKeys.join(", ")}`, "error");
+      } else {
+        runIdLog(input.runId, `[DEBUG] Persistence verified. All keys present in DB.`);
+      }
+    }
+  } catch (dbErr) {
+    runIdLog(input.runId, `[DEBUG] DB ERROR during upsert: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`, "error");
+    throw dbErr;
+  }
 
   return { slug };
 }

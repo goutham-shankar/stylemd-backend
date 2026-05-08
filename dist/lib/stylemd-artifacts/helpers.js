@@ -12,6 +12,7 @@ exports.assertNotAborted = assertNotAborted;
 exports.errorToMessage = errorToMessage;
 exports.isAbortError = isAbortError;
 exports.getPlaywrightLaunchOptions = getPlaywrightLaunchOptions;
+exports.runIdLog = runIdLog;
 const types_1 = require("../../lib/stylemd-artifacts/types");
 class StyleMdPipelineAbortedError extends Error {
     constructor(message = "Style artifact pipeline canceled") {
@@ -122,4 +123,22 @@ function getPlaywrightLaunchOptions() {
         options.args.push("--no-sandbox", "--disable-setuid-sandbox");
     }
     return options;
+}
+/**
+ * Correlated logging for pipeline tracing.
+ */
+function runIdLog(runId, message, level = "info") {
+    const prefix = `[runId=${runId}]`;
+    const fullMessage = `${prefix} ${message}`;
+    switch (level) {
+        case "error":
+            console.error(fullMessage);
+            break;
+        case "warn":
+            console.warn(fullMessage);
+            break;
+        default:
+            console.log(fullMessage);
+            break;
+    }
 }

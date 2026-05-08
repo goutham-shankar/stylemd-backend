@@ -30,6 +30,6 @@ const StyleMdRunSchema = new mongoose.Schema({
   status: { type: String, default: "completed" },
   createdAt: { type: Date, default: () => new Date() },
   updatedAt: { type: Date, default: () => new Date() },
-}, { collection: "stylemd_runs" });
+}, { collection: "stylemd_runs", strict: false });
 
 export const StyleMdRun = mongoose.models["StyleMdRun"] || mongoose.model("StyleMdRun", StyleMdRunSchema);

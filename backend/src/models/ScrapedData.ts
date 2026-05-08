@@ -24,7 +24,7 @@ const ScrapedSchema = new mongoose.Schema(
     createdAt:   { type: Date, default: () => new Date() },
     updatedAt:   { type: Date, default: () => new Date() },
   },
-  { collection: "scraped_data" },
+  { collection: "scraped_data", strict: false },
 );
 
 export const ScrapedData =

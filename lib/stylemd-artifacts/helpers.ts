@@ -147,3 +147,17 @@ export function getPlaywrightLaunchOptions() {
 
   return options;
 }
+
+/**
+ * Correlated logging for pipeline tracing.
+ */
+export function runIdLog(runId: string, message: string, level: "info" | "warn" | "error" | "debug" = "info") {
+  const prefix = `[runId=${runId}]`;
+  const fullMessage = `${prefix} ${message}`;
+  
+  switch (level) {
+    case "error": console.error(fullMessage); break;
+    case "warn": console.warn(fullMessage); break;
+    default: console.log(fullMessage); break;
+  }
+}

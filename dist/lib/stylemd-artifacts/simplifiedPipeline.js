@@ -77,9 +77,15 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
         console.warn("[PIPELINE] early ping persist failed, continuing under unstable network", e);
     }
     // 🔴 STEP 1: MOVE SCRAPE TO START (In-memory only for now)
-    console.log(`[PIPELINE] Early scraping ${url}...`);
+    (0, helpers_1.runIdLog)(runIdValue, `Early scraping ${url}...`);
     const canonUrl = (0, pageUrlCanonical_1.canonicalPageUrl)(url);
     const scraped = await (0, scraper_1.scrape)(canonUrl);
+    if (scraped) {
+        (0, helpers_1.runIdLog)(runIdValue, `[DEBUG] Scrape result: title="${scraped.title}", htmlLength=${scraped.rawHtml?.length ?? 0}, textLength=${scraped.contentText?.length ?? 0}, imagesCount=${scraped.images?.length ?? 0}`);
+    }
+    else {
+        (0, helpers_1.runIdLog)(runIdValue, `[DEBUG] Scrape FAILED (returned null) for ${url}`, "warn");
+    }
     // 🔴 STEP 2: OPTIONAL/NON-BLOCKING SCRAPED DATA PERSIST
     if (scraped) {
         // We do NOT wait for this to block the pipeline
@@ -90,7 +96,9 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
                 updatedAt: new Date()
             },
             $setOnInsert: { createdAt: new Date() }
-        }, { upsert: true })).catch(e => console.warn("[SCRAPE] optional persist failed, ignoring", e));
+        }, { upsert: true })).catch(e => {
+            (0, helpers_1.runIdLog)(runIdValue, `[FALLBACK_TRIGGERED] ScrapedData optional persist failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+        });
     }
     const config = mergeConfig({});
     let state = (0, helpers_1.createInitialRunState)(runIdValue, url, runtime.provider, runtime.model);
@@ -345,6 +353,10 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
                 }
                 catch (error) {
                     const warning = `Browser relaunch failed for styleguide stage; continuing. Reason: ${(0, helpers_1.errorToMessage)(error)}`;
+                    (0, helpers_1.runIdLog)(runIdValue, `[STAGE_FAILED] styleguide_browser_launch: ${warning}`, "warn");
+                    if (error instanceof Error && error.stack) {
+                        (0, helpers_1.runIdLog)(runIdValue, `[STACK] ${error.stack}`, "debug");
+                    }
                     state = (0, helpers_1.updateRunState)(state, {
                         warnings: [...state.warnings, warning],
                     });
@@ -358,6 +370,8 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
                     });
                     await publishState();
                 }
+                (0, helpers_1.runIdLog)(runIdValue, `Starting styleguide stage...`);
+                const startTime = Date.now();
                 const output = await (0, styleguide_1.runStyleguideStage)({
                     runId: runIdValue,
                     url,
@@ -366,6 +380,11 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
                     signal,
                     runtime,
                 });
+                const duration = Date.now() - startTime;
+                (0, helpers_1.runIdLog)(runIdValue, `[DEBUG] Styleguide stage finished in ${duration}ms. outputMarkdownLength=${output.result.styleMarkdown?.length ?? 0}, artifactsCount=${output.artifacts.length}`);
+                if (!output.result.styleMarkdown?.trim()) {
+                    (0, helpers_1.runIdLog)(runIdValue, `[DEBUG] WARNING: Styleguide stage returned EMPTY markdown content.`, "warn");
+                }
                 registerArtifacts(output.artifacts);
                 await publishState();
                 await (0, mongodb_1.mongoKeepAlive)(); // Step 3: Mid-stage keepalive
@@ -387,8 +406,10 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
                     message: warning,
                 });
                 await publishState();
-            }
-            else {
+                (0, helpers_1.runIdLog)(runIdValue, `[STAGE_FAILED] styleguide_stage UNKNOWN ERROR: ${(0, helpers_1.errorToMessage)(error)}`, "error");
+                if (error instanceof Error && error.stack) {
+                    (0, helpers_1.runIdLog)(runIdValue, `[STACK] ${error.stack}`, "debug");
+                }
                 throw error;
             }
         }
@@ -442,7 +463,13 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
         }
         // 🔴 PRIMARY OUTPUT: Persist styleMd critically
         try {
-            console.log(`[PIPELINE] Saving final StyleMdRun for ${runIdValue}...`);
+            if (styleMdContent.length < 100) {
+                (0, helpers_1.runIdLog)(runIdValue, `[DEBUG] WARNING: styleMdContent is very short (${styleMdContent.length} chars). Preview: "${styleMdContent.substring(0, 50)}..."`, "warn");
+                if (!styleMdContent && scraped?.contentText) {
+                    (0, helpers_1.runIdLog)(runIdValue, `[FALLBACK_TRIGGERED] styleMd is empty, will fallback to raw contentText in API response.`, "warn");
+                }
+            }
+            (0, helpers_1.runIdLog)(runIdValue, `Saving final StyleMdRun... (styleMdLength=${styleMdContent.length}, screenshotLength=${screenshotBase64Var.length})`);
             await (0, persistStyleMdMongo_1.persistStyleMdAfterGeneration)({
                 url,
                 runId: runIdValue,
@@ -459,7 +486,7 @@ async function runSimplifiedStyleMdPipeline(url, provider = "kimi") {
             });
         }
         catch (dbErr) {
-            console.error(`[PIPELINE] CRITICAL: Final StyleMdRun persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+            (0, helpers_1.runIdLog)(runIdValue, `CRITICAL: Final StyleMdRun persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`, "error");
             throw dbErr; // Fail the pipeline if the primary output cannot be saved
         }
         await emitAndLog({

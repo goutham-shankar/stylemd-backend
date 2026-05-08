@@ -25,6 +25,7 @@ import {
   isAbortError,
   mergeArtifact,
   nowIso,
+  runIdLog,
   updateRunState,
   updateStageState,
 } from "@/lib/stylemd-artifacts/helpers";
@@ -134,9 +135,15 @@ export async function runSimplifiedStyleMdPipeline(
 
 
   // 🔴 STEP 1: MOVE SCRAPE TO START (In-memory only for now)
-  console.log(`[PIPELINE] Early scraping ${url}...`);
+  runIdLog(runIdValue, `Early scraping ${url}...`);
   const canonUrl = canonicalPageUrl(url);
   const scraped = await scrape(canonUrl);
+  
+  if (scraped) {
+    runIdLog(runIdValue, `[DEBUG] Scrape result: title="${scraped.title}", htmlLength=${scraped.rawHtml?.length ?? 0}, textLength=${scraped.contentText?.length ?? 0}, imagesCount=${scraped.images?.length ?? 0}`);
+  } else {
+    runIdLog(runIdValue, `[DEBUG] Scrape FAILED (returned null) for ${url}`, "warn");
+  }
 
   // 🔴 STEP 2: OPTIONAL/NON-BLOCKING SCRAPED DATA PERSIST
   if (scraped) {
@@ -154,7 +161,9 @@ export async function runSimplifiedStyleMdPipeline(
         },
         { upsert: true }
       )
-    ).catch(e => console.warn("[SCRAPE] optional persist failed, ignoring", e));
+    ).catch(e => {
+      runIdLog(runIdValue, `[FALLBACK_TRIGGERED] ScrapedData optional persist failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+    });
   }
 
   const config = mergeConfig({});
@@ -449,6 +458,11 @@ export async function runSimplifiedStyleMdPipeline(
           page = await context.newPage();
         } catch (error) {
           const warning = `Browser relaunch failed for styleguide stage; continuing. Reason: ${errorToMessage(error)}`;
+          runIdLog(runIdValue, `[STAGE_FAILED] styleguide_browser_launch: ${warning}`, "warn");
+          if (error instanceof Error && error.stack) {
+            runIdLog(runIdValue, `[STACK] ${error.stack}`, "debug");
+          }
+          
           state = updateRunState(state, {
             warnings: [...state.warnings, warning],
           });
@@ -463,6 +477,8 @@ export async function runSimplifiedStyleMdPipeline(
           await publishState();
         }
 
+        runIdLog(runIdValue, `Starting styleguide stage...`);
+        const startTime = Date.now();
         const output = await runStyleguideStage({
           runId: runIdValue,
           url,
@@ -471,6 +487,13 @@ export async function runSimplifiedStyleMdPipeline(
           signal,
           runtime,
         });
+        const duration = Date.now() - startTime;
+
+        runIdLog(runIdValue, `[DEBUG] Styleguide stage finished in ${duration}ms. outputMarkdownLength=${output.result.styleMarkdown?.length ?? 0}, artifactsCount=${output.artifacts.length}`);
+        
+        if (!output.result.styleMarkdown?.trim()) {
+          runIdLog(runIdValue, `[DEBUG] WARNING: Styleguide stage returned EMPTY markdown content.`, "warn");
+        }
 
         registerArtifacts(output.artifacts);
         await publishState();
@@ -493,7 +516,10 @@ export async function runSimplifiedStyleMdPipeline(
           message: warning,
         });
         await publishState();
-      } else {
+        runIdLog(runIdValue, `[STAGE_FAILED] styleguide_stage UNKNOWN ERROR: ${errorToMessage(error)}`, "error");
+        if (error instanceof Error && error.stack) {
+          runIdLog(runIdValue, `[STACK] ${error.stack}`, "debug");
+        }
         throw error;
       }
     }
@@ -553,7 +579,16 @@ export async function runSimplifiedStyleMdPipeline(
 
     // 🔴 PRIMARY OUTPUT: Persist styleMd critically
     try {
-      console.log(`[PIPELINE] Saving final StyleMdRun for ${runIdValue}...`);
+      if (styleMdContent.length < 100) {
+        runIdLog(runIdValue, `[DEBUG] WARNING: styleMdContent is very short (${styleMdContent.length} chars). Preview: "${styleMdContent.substring(0, 50)}..."`, "warn");
+        
+        if (!styleMdContent && scraped?.contentText) {
+          runIdLog(runIdValue, `[FALLBACK_TRIGGERED] styleMd is empty, will fallback to raw contentText in API response.`, "warn");
+        }
+      }
+
+      runIdLog(runIdValue, `Saving final StyleMdRun... (styleMdLength=${styleMdContent.length}, screenshotLength=${screenshotBase64Var.length})`);
+      
       await persistStyleMdAfterGeneration({
         url,
         runId: runIdValue,
@@ -569,7 +604,7 @@ export async function runSimplifiedStyleMdPipeline(
         canonical: scraped?.canonical,
       });
     } catch (dbErr) {
-      console.error(`[PIPELINE] CRITICAL: Final StyleMdRun persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+      runIdLog(runIdValue, `CRITICAL: Final StyleMdRun persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`, "error");
       throw dbErr; // Fail the pipeline if the primary output cannot be saved
     }
 

@@ -13,6 +13,7 @@ import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
 
 import { isValidScrapedRecord } from "../utils/validation";
+import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
 
 interface StyleMdRunDoc {
   url: string;
@@ -59,8 +60,14 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       .sort({ createdAt: -1 })
       .lean<StyleMdRunDoc>();
     
-    // STRICT validity check: return cached only if valid
-    const isValid = existing && existing.status !== "running" && existing.styleMd?.trim() && isValidScrapedRecord(existing);
+    // 🟠 FIX: StyleMdRun does not have contentText/rawHtml, so isValidScrapedRecord fails.
+    // We check for status="completed" and non-empty styleMd.
+    const isValid = existing && 
+      existing.status === "completed" && 
+      existing.styleMd?.trim() && 
+      existing.images?.length;
+
+    console.log(`[STYLEMD] Checking cache for slug=${slug}. Found: ${existing ? "YES" : "NO"}, Valid: ${isValid ? "YES" : "NO"}`);
 
     if (isValid) {
       console.log(`[STYLEMD] cache-hit (valid) slug=${slug}`);
@@ -132,19 +139,23 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     
     const now = new Date();
 
+    const responseData = {
+      url: canonUrl,
+      slug,
+      runId: result.runId,
+      provider,
+      model: result.model,
+      styleMd: result.styleMd,
+      images: result.screenshot ? [result.screenshot] : [],
+      status: "completed",
+      createdAt: now.toISOString(),
+    };
+
+    runIdLog(result.runId, `[DEBUG] Sending API response. Payload keys: ${Object.keys(responseData).join(", ")}. styleMdLength=${responseData.styleMd?.length ?? 0}`);
+    
     res.json({
       ok: true,
-      data: {
-        url: canonUrl,
-        slug,
-        runId: result.runId,
-        provider,
-        model: result.model,
-        styleMd: result.styleMd,
-        images: result.screenshot ? [result.screenshot] : [],
-        status: "completed",
-        createdAt: now.toISOString(),
-      },
+      data: responseData,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -184,6 +195,7 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
     }
 
     const styleMd = await resolveStyleMdForRunDoc(doc);
+    console.log(`[getBySlug] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback: ${!doc.styleMd})`);
 
     res.json({
       ok: true,

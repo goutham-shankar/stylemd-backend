@@ -32,5 +32,5 @@ const StyleMdRunSchema = new mongoose_1.default.Schema({
     status: { type: String, default: "completed" },
     createdAt: { type: Date, default: () => new Date() },
     updatedAt: { type: Date, default: () => new Date() },
-}, { collection: "stylemd_runs" });
+}, { collection: "stylemd_runs", strict: false });
 exports.StyleMdRun = mongoose_1.default.models["StyleMdRun"] || mongoose_1.default.model("StyleMdRun", StyleMdRunSchema);

@@ -21,6 +21,7 @@ import {
   errorToMessage,
   getPlaywrightLaunchOptions,
   nowIso,
+  runIdLog,
 } from "@/lib/stylemd-artifacts/helpers";
 import type {
   StyleMdArtifactRecord,
@@ -1864,6 +1865,19 @@ async function runClaudeStyleguideQuery(input: ClaudeStyleguideQueryInput): Prom
 
   try {
     for await (const message of stream) {
+      if (message.type === "result") {
+        runIdLog(runId, `[DEBUG] AI query ${queryLabel} result status: is_error=${message.is_error}, stop_reason=${message.stop_reason}`, message.is_error ? "error" : "info");
+        if (message.is_error) {
+          runIdLog(runId, `[DEBUG] AI query ${queryLabel} FAILED: ${getResultFailureDetail(message)}`, "error");
+        }
+        
+        // Log token usage from message result if available
+        if ("usage" in message && message.usage && typeof message.usage === "object") {
+          const usage = message.usage as { input_tokens?: number; output_tokens?: number };
+          runIdLog(runId, `[DEBUG] AI query ${queryLabel} tokens: input=${usage.input_tokens}, output=${usage.output_tokens}`);
+        }
+      }
+
       const deltaText = extractDeltaText(message);
       if (deltaText) {
         streamedText += deltaText;
@@ -1905,10 +1919,15 @@ async function runClaudeStyleguideQuery(input: ClaudeStyleguideQueryInput): Prom
   }
 
   const mergedText = finalText.trim() || streamedText.trim();
+  
+  runIdLog(runId, `[DEBUG] AI query ${queryLabel} finished. mergedTextLength=${mergedText.length}, timedOut=${timedOut}, inputTokens=${inputTokens}, outputTokens=${outputTokens}`);
+
   if (timedOut) {
+    runIdLog(runId, `[DEBUG] AI query ${queryLabel} TIMED OUT`, "error");
     throw new Error(`${providerLabel} ${queryLabel} query timed out after ${STYLEGUIDE_QUERY_TIMEOUT_MS}ms.`);
   }
   if (!mergedText) {
+    runIdLog(runId, `[DEBUG] AI query ${queryLabel} RETURNED NO TEXT`, "error");
     throw new Error(`${providerLabel} ${queryLabel} query returned no text.`);
   }
 
