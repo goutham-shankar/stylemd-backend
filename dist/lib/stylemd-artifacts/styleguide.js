@@ -6,7 +6,7 @@ exports.runShowcaseStage = runShowcaseStage;
 const node_fs_1 = require("node:fs");
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
-const claude_agent_sdk_1 = require("@anthropic-ai/claude-agent-sdk");
+const bridge_1 = require("../../lib/kimi/bridge");
 const playwright_1 = require("playwright");
 const logging_1 = require("../../lib/utils/logging");
 const stylemdSessionStore_1 = require("../../lib/store/stylemdSessionStore");
@@ -1268,7 +1268,7 @@ async function runClaudeStyleguideQuery(input) {
         stageName,
     });
     const preToolUseHook = async (hookInput) => {
-        const guardDecision = await preToolPathGuard(hookInput, undefined, { signal: abortController.signal });
+        const guardDecision = await preToolPathGuard(hookInput);
         const guardDecisionLike = guardDecision;
         if (guardDecisionLike.continue === false || guardDecisionLike.decision === "block") {
             return guardDecision;
@@ -1314,124 +1314,26 @@ async function runClaudeStyleguideQuery(input) {
         });
         return { continue: true };
     };
-    const stream = (0, claude_agent_sdk_1.query)({
+    const result = await (0, bridge_1.queryWithKimiBridge)({
+        runId,
+        workspaceDir,
+        runtime,
+        systemPrompt,
         prompt,
-        options: {
-            abortController,
-            cwd: workspaceDir,
-            model: runtime.queryModel,
-            env: runtime.env,
-            systemPrompt,
-            includePartialMessages: true,
-            settingSources: [],
-            tools: {
-                type: "preset",
-                preset: "claude_code",
-            },
-            mcpServers: {},
-            disallowedTools: ["WebSearch", "WebFetch", "Bash", "Edit", "Write", "MultiEdit", "Agent"],
-            allowedTools: STYLEGUIDE_ALLOWED_TOOLS,
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
-            hooks: {
-                PreToolUse: [{ hooks: [preToolUseHook] }],
-                PostToolUse: [{ hooks: [postToolUseHook] }],
-                PostToolUseFailure: [{ hooks: [postToolUseFailureHook] }],
-            },
+        signal,
+        queryLabel,
+        stage: "styleguide",
+        onTokenUsage: (inputTokens, outputTokens) => {
+            storeTokenUsage(runId, queryLabel || "styleguide", inputTokens, outputTokens);
         },
     });
-    let finalText = "";
-    let streamedText = "";
-    let timedOut = false;
-    let inputTokens = 0;
-    let outputTokens = 0;
-    const timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        abortController.abort();
-    }, STYLEGUIDE_QUERY_TIMEOUT_MS);
-    try {
-        for await (const message of stream) {
-            if (message.type === "result") {
-                (0, helpers_1.runIdLog)(runId, `[DEBUG] AI query ${queryLabel} result status: is_error=${message.is_error}, stop_reason=${message.stop_reason}`, message.is_error ? "error" : "info");
-                if (message.is_error) {
-                    (0, helpers_1.runIdLog)(runId, `[DEBUG] AI query ${queryLabel} FAILED: ${getResultFailureDetail(message)}`, "error");
-                }
-                // Log token usage from message result if available
-                if ("usage" in message && message.usage && typeof message.usage === "object") {
-                    const usage = message.usage;
-                    (0, helpers_1.runIdLog)(runId, `[DEBUG] AI query ${queryLabel} tokens: input=${usage.input_tokens}, output=${usage.output_tokens}`);
-                }
-            }
-            const deltaText = extractDeltaText(message);
-            if (deltaText) {
-                streamedText += deltaText;
-                emitObservedStyleMdEvent(runId, {
-                    type: "assistant_message_delta",
-                    source: "agent",
-                    delta: `${stageTag}\u2063${deltaText}`,
-                });
-            }
-            const assistantText = extractAssistantText(message);
-            if (assistantText) {
-                finalText = assistantText;
-            }
-            if (message.type === "result" && "result" in message && typeof message.result === "string" && message.result.trim()) {
-                finalText = message.result.trim();
-            }
-            // Extract token usage from result message
-            if (message.type === "result" && "usage" in message && message.usage) {
-                const usage = message.usage;
-                if (typeof usage.input_tokens === "number") {
-                    inputTokens = usage.input_tokens;
-                }
-                if (typeof usage.output_tokens === "number") {
-                    outputTokens = usage.output_tokens;
-                }
-            }
-            if (message.type === "result" && message.is_error) {
-                throw new Error(`${providerLabel} ${queryLabel} query failed (${message.subtype}): ${getResultFailureDetail(message)}`);
-            }
-        }
-    }
-    finally {
-        clearTimeout(timeoutTimer);
-        signal.removeEventListener("abort", onAbort);
-        stream.close();
-    }
-    const mergedText = finalText.trim() || streamedText.trim();
-    (0, helpers_1.runIdLog)(runId, `[DEBUG] AI query ${queryLabel} finished. mergedTextLength=${mergedText.length}, timedOut=${timedOut}, inputTokens=${inputTokens}, outputTokens=${outputTokens}`);
-    if (timedOut) {
-        (0, helpers_1.runIdLog)(runId, `[DEBUG] AI query ${queryLabel} TIMED OUT`, "error");
-        throw new Error(`${providerLabel} ${queryLabel} query timed out after ${STYLEGUIDE_QUERY_TIMEOUT_MS}ms.`);
-    }
-    if (!mergedText) {
-        (0, helpers_1.runIdLog)(runId, `[DEBUG] AI query ${queryLabel} RETURNED NO TEXT`, "error");
-        throw new Error(`${providerLabel} ${queryLabel} query returned no text.`);
-    }
-    const transcriptText = mergedText.length > 12000 ? `${mergedText.slice(0, 12000)}\n...[truncated stylemd styleguide output]` : mergedText;
+    const transcriptText = result.length > 12000 ? `${result.slice(0, 12000)}\n...[truncated stylemd styleguide output]` : result;
     emitObservedStyleMdEvent(runId, {
         type: "assistant_final_message",
         source: "agent",
         text: `${stageTag}\n${transcriptText}`,
     });
-    // Log token usage for tracking
-    const totalTokens = inputTokens + outputTokens;
-    storeTokenUsage(runId, queryLabel, inputTokens, outputTokens);
-    emitObservedStyleMdEvent(runId, {
-        type: "stylemd_action",
-        source: "system",
-        runId,
-        stage: stageName,
-        level: "info",
-        message: `${providerLabel} ${queryLabel} token usage`,
-        detail: {
-            provider: runtime.provider,
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
-            total_tokens: totalTokens,
-        },
-    });
-    return mergedText;
+    return result;
 }
 async function runStyleguideStage(input) {
     const { runId, url, curatedManifestPath, curatedManifest, responsiveHoverEvidencePath, signal, } = input;

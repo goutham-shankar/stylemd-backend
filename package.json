@@ -16,7 +16,6 @@
     "migrate:runs": "node scripts/migrate-stylemd-runs.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.104",
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",

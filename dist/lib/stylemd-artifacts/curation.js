@@ -7,7 +7,7 @@ exports.applyStyleMdCurationDecisions = applyStyleMdCurationDecisions;
 exports.runCurateStage = runCurateStage;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
-const claude_agent_sdk_1 = require("@anthropic-ai/claude-agent-sdk");
+const bridge_1 = require("../../lib/kimi/bridge");
 const zod_1 = require("zod");
 const logging_1 = require("../../lib/utils/logging");
 const stylemdSessionStore_1 = require("../../lib/store/stylemdSessionStore");
@@ -587,8 +587,7 @@ function computeDeterministicFallbackDecisions(components) {
     }));
 }
 async function runClaudeCurationQuery(input) {
-    const { runId, workspaceDir, runtime, systemPrompt, prompt, signal, } = input;
-    const providerLabel = runtime.provider === "kimi" ? "Kimi" : "Claude";
+    const { runId, workspaceDir, runtime, systemPrompt, prompt, signal, queryLabel, } = input;
     const stageTag = buildStageTag(runId, "curate");
     const abortController = new AbortController();
     const onAbort = () => {
@@ -603,7 +602,7 @@ async function runClaudeCurationQuery(input) {
         workspaceDir,
     });
     const preToolUseHook = async (hookInput) => {
-        const guardDecision = await preToolPathGuard(hookInput, undefined, { signal: abortController.signal });
+        const guardDecision = await preToolPathGuard(hookInput);
         const guardDecisionLike = guardDecision;
         if (guardDecisionLike.continue === false || guardDecisionLike.decision === "block") {
             return guardDecision;
@@ -649,81 +648,26 @@ async function runClaudeCurationQuery(input) {
         });
         return { continue: true };
     };
-    const stream = (0, claude_agent_sdk_1.query)({
+    const result = await (0, bridge_1.queryWithKimiBridge)({
+        runId,
+        workspaceDir,
+        runtime,
+        systemPrompt,
         prompt,
-        options: {
-            abortController,
-            cwd: workspaceDir,
-            model: runtime.queryModel,
-            env: runtime.env,
-            systemPrompt,
-            includePartialMessages: true,
-            settingSources: [],
-            tools: {
-                type: "preset",
-                preset: "claude_code",
-            },
-            mcpServers: {},
-            disallowedTools: ["WebSearch", "WebFetch", "Bash", "Edit", "Write", "MultiEdit"],
-            allowedTools: CURATION_ALLOWED_TOOLS,
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
-            hooks: {
-                PreToolUse: [{ hooks: [preToolUseHook] }],
-                PostToolUse: [{ hooks: [postToolUseHook] }],
-                PostToolUseFailure: [{ hooks: [postToolUseFailureHook] }],
-            },
+        signal,
+        queryLabel,
+        stage: "curate",
+        onTokenUsage: (inputTokens, outputTokens) => {
+            storeTokenUsage(runId, queryLabel || "curate", inputTokens, outputTokens);
         },
     });
-    let finalText = "";
-    let streamedText = "";
-    let timedOut = false;
-    const timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        abortController.abort();
-    }, CURATION_QUERY_TIMEOUT_MS);
-    try {
-        for await (const message of stream) {
-            const deltaText = extractDeltaText(message);
-            if (deltaText) {
-                streamedText += deltaText;
-                emitObservedStyleMdEvent(runId, {
-                    type: "assistant_message_delta",
-                    source: "agent",
-                    delta: `${stageTag}\u2063${deltaText}`,
-                });
-            }
-            const assistantText = extractAssistantText(message);
-            if (assistantText) {
-                finalText = assistantText;
-            }
-            if (message.type === "result" && "result" in message && typeof message.result === "string" && message.result.trim()) {
-                finalText = message.result.trim();
-            }
-            if (message.type === "result" && message.is_error) {
-                throw new Error(`${providerLabel} curation query failed (${message.subtype}): ${getResultFailureDetail(message)}`);
-            }
-        }
-    }
-    finally {
-        clearTimeout(timeoutTimer);
-        signal.removeEventListener("abort", onAbort);
-        stream.close();
-    }
-    const mergedText = finalText.trim() || streamedText.trim();
-    if (timedOut) {
-        throw new Error(`${providerLabel} curation query timed out after ${CURATION_QUERY_TIMEOUT_MS}ms.`);
-    }
-    if (!mergedText) {
-        throw new Error(`${providerLabel} curation returned no text.`);
-    }
-    const transcriptText = mergedText.length > 10000 ? `${mergedText.slice(0, 10000)}\n...[truncated stylemd curate output]` : mergedText;
+    const transcriptText = result.length > 10000 ? `${result.slice(0, 10000)}\n...[truncated stylemd curate output]` : result;
     emitObservedStyleMdEvent(runId, {
         type: "assistant_final_message",
         source: "agent",
         text: `${stageTag}\n${transcriptText}`,
     });
-    return mergedText;
+    return result;
 }
 async function applyStyleMdCurationDecisions(input, options = {}) {
     const { runId, url, sourceManifestPath, decisions, components } = input;

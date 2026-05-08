@@ -4,7 +4,7 @@
  */
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import type { HookCallback, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { HookCallback, SDKMessage } from "@/lib/stylemd-artifacts/sdk-types";
 import { runKimiCurationQuery } from "@/lib/kimi/curation";
 import { runKimiStyleguideQuery } from "@/lib/kimi/styleguide";
 import type { StyleMdRuntimeConfig } from "@/lib/stylemd-artifacts/provider";
