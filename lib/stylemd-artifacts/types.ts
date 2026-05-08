@@ -1,4 +1,4 @@
-export const STYLEMD_PIPELINE_STAGES = ["capture", "extract", "dedup", "curate", "styleguide"] as const;
+export const STYLEMD_PIPELINE_STAGES = ["capture", "extract", "dedup", "curate", "styleguide", "showcase"] as const;
 
 export type StyleMdPipelineStageName = (typeof STYLEMD_PIPELINE_STAGES)[number];
 export type StyleMdProvider = "claude" | "kimi";
@@ -133,8 +133,74 @@ export interface StyleMdExtractResult {
   pageStylesPath: string;
   fontsManifestPath: string;
   fontsLocalCssPath: string;
+  designTokenManifestPath?: string;
+  designTokenManifest?: StyleMdDesignTokenManifest;
+  semanticStructurePath?: string;
+  semanticStructure?: StyleMdSemanticStructure;
   components: StyleMdComponentEntry[];
   candidateCount: number;
+}
+
+export interface StyleMdDesignTokenManifest {
+  run_id: string;
+  url: string;
+  generated_at: string;
+  palette: {
+    primary: string[];
+    secondary: string[];
+    accent: string[];
+    background: string[];
+    surface: string[];
+    text: string[];
+    muted: string[];
+    allObserved: Array<{
+      hex: string;
+      areaWeight: number;
+      frequency: number;
+      roles: string[];
+      confidence: "confirmed" | "inferred" | "weak_signal";
+    }>;
+  };
+  gradients: string[];
+  typography: {
+    display: string[];
+    body: string[];
+    ui: string[];
+    scales: Array<{
+      tag: string;
+      role: "display" | "body" | "ui";
+      fontSize: string;
+      fontWeight: string;
+      lineHeight: string;
+      color: string;
+      usageCount: number;
+    }>;
+  };
+  spacing: string[];
+  radius: string[];
+  shadows: string[];
+  surfaces: Array<{
+    role: "page_canvas" | "hero_surface" | "section_surface" | "card_surface" | "overlay_surface" | "interactive_surface" | "footer_surface";
+    background: string;
+    text: string;
+    areaWeight: number;
+  }>;
+  buttons: {
+    radius: string;
+    paddingDensity: "compact" | "normal" | "spacious";
+    fillType: "solid" | "outline" | "ghost" | "gradient";
+    variants: any[];
+  };
+  mood: {
+    style?: "editorial" | "brutalist" | "minimal" | "luxury" | "playful" | "organic" | "cinematic" | "corporate";
+    confidence: number;
+  };
+  resolvedCssVariables: Record<string, string>;
+  metrics: {
+    totalElementsScanned: number;
+    extractionDurationMs: number;
+    confidenceScore: number;
+  };
 }
 
 export interface StyleMdDuplicatePair {
@@ -181,6 +247,27 @@ export interface StyleMdResponsiveHoverEvidence {
     };
     units: StyleMdUnitResponsiveCapture[];
   }>;
+}
+
+export interface StyleMdSemanticSection {
+  id: string;
+  tagName: string;
+  role: string;
+  classification: "hero" | "navbar" | "footer" | "pricing" | "testimonials" | "features" | "content" | "unknown";
+  rect: StyleMdComponentRect;
+  depth: number;
+  childCandidateIds: string[];
+}
+
+export interface StyleMdSemanticStructure {
+  run_id: string;
+  url: string;
+  sections: StyleMdSemanticSection[];
+  layoutPatterns: {
+    isStickyHeader: boolean;
+    hasSidebar: boolean;
+    isCenterAligned: boolean;
+  };
 }
 
 export interface StyleMdCurationSingleDecision {

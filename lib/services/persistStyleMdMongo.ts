@@ -79,6 +79,16 @@ export type PersistStyleMdInput = {
   description?: string | null;
   h1?: string | null;
   canonical?: string | null;
+  extractionMetadata?: {
+    scannedElements?: number;
+    durationMs?: number;
+    confidenceScore?: number;
+    primaryColors?: string[];
+    typographyFamilies?: string[];
+    sectionCount?: number;
+    designTokenManifest?: any;
+    semanticStructure?: any;
+  };
 };
 
 /**
@@ -123,6 +133,7 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
     description: input.description,
     h1: input.h1,
     canonical: input.canonical,
+    extractionMetadata: input.extractionMetadata,
   };
 
   if (hasScreenshot) {

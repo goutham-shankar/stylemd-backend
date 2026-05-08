@@ -28,6 +28,19 @@ const StyleMdRunSchema = new mongoose.Schema({
   },
   
   status: { type: String, default: "completed" },
+  
+  // Observability metadata for Phase 5
+  extractionMetadata: {
+    scannedElements: { type: Number },
+    durationMs: { type: Number },
+    confidenceScore: { type: Number },
+    primaryColors: { type: [String] },
+    typographyFamilies: { type: [String] },
+    sectionCount: { type: Number },
+    designTokenManifest: { type: mongoose.Schema.Types.Mixed },
+    semanticStructure: { type: mongoose.Schema.Types.Mixed },
+  },
+  
   createdAt: { type: Date, default: () => new Date() },
   updatedAt: { type: Date, default: () => new Date() },
 }, { collection: "stylemd_runs", strict: false });

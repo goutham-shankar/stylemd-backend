@@ -1,10 +1,8 @@
 /**
  * Kimi Integration Bridge
- * Adapts Kimi API to Claude SDK interface for gradual migration
+ * Adapts Kimi API to standard interface
  */
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import type { HookCallback, SDKMessage } from "@/lib/stylemd-artifacts/sdk-types";
 import { runKimiCurationQuery } from "@/lib/kimi/curation";
 import { runKimiStyleguideQuery } from "@/lib/kimi/styleguide";
 import type { StyleMdRuntimeConfig } from "@/lib/stylemd-artifacts/provider";
@@ -26,7 +24,6 @@ export interface KimiBridgeOptions {
 
 /**
  * Query using Kimi AI with hook callbacks
- * Compatible with existing Claude SDK interface
  */
 export async function queryWithKimiBridge(options: KimiBridgeOptions): Promise<string> {
   const {

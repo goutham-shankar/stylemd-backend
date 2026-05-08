@@ -31,10 +31,12 @@ import {
 } from "@/lib/stylemd-artifacts/helpers";
 import {
   runCaptureStage,
+  runCuratedResponsiveHoverEvidenceStage,
   runDedupStage,
   runExtractStage,
 } from "@/lib/stylemd-artifacts/stages";
-import { runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
+import { runCurateStage } from "@/lib/stylemd-artifacts/curation";
+import { runShowcaseStage, runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
 import { markStyleMdRunPendingInMongo, persistStyleMdAfterGeneration } from "@/lib/services/persistStyleMdMongo";
 import {
   resolveStyleMdRuntimeConfig,
@@ -46,6 +48,7 @@ import {
   type StyleMdComponentEntry,
   type StyleMdCuratedManifest,
   type StyleMdPipelineConfig,
+  type StyleMdPipelineStageName,
   type StyleMdProvider,
   type StyleMdRunState,
   type StyleMdRunSummary,
@@ -124,13 +127,16 @@ export async function runSimplifiedStyleMdPipeline(
     await mongoKeepAlive();
   }, 10000);
 
-  // Step 6: Reduce idle gap with a lightweight write (Non-blocking)
+  // 🔴 Mark run pending so the DB record exists for the screenshot
   try {
-    await safeWrite(() =>
-      StyleMdRun.updateOne({ runId: id }, { $set: { lastPing: new Date() } })
-    );
+    await markStyleMdRunPendingInMongo({
+      url,
+      runId: runIdValue,
+      provider: runtime.provider,
+      model: runtime.model,
+    });
   } catch (e) {
-    console.warn("[PIPELINE] early ping persist failed, continuing under unstable network", e);
+    console.warn("[PIPELINE] early pending persist failed, continuing under unstable network", e);
   }
 
 
@@ -170,6 +176,9 @@ export async function runSimplifiedStyleMdPipeline(
 
   let state = createInitialRunState(runIdValue, url, runtime.provider, runtime.model);
 
+  // Use Kimi for curation and generation stages to reduce costs and use high-reasoning models
+  const kimiRuntime = resolveStyleMdRuntimeConfig("kimi");
+
   async function emitAndLog(event: StyleMdPipelineEventPayload): Promise<void> {
     const fullEvent = emitEvent(event as Parameters<typeof emitEvent>[0]);
     await appendStyleMdLogLine(runIdValue, fullEvent);
@@ -193,25 +202,27 @@ export async function runSimplifiedStyleMdPipeline(
   }
 
   async function runStage<T>(
-    stage: "capture" | "extract" | "dedup" | "styleguide",
+    stage: StyleMdPipelineStageName,
     handler: () => Promise<T>,
   ): Promise<T> {
     assertNotAborted(signal);
 
-    const stageNames: Record<"capture" | "extract" | "dedup" | "styleguide", { num: number; emoji: string }> = {
+    const stageNames: Record<StyleMdPipelineStageName, { num: number; emoji: string }> = {
       capture: { num: 1, emoji: "📸" },
       extract: { num: 2, emoji: "🔍" },
       dedup: { num: 3, emoji: "🎯" },
-      styleguide: { num: 4, emoji: "✨" },
+      curate: { num: 4, emoji: "📋" },
+      styleguide: { num: 5, emoji: "✨" },
+      showcase: { num: 6, emoji: "🎪" },
     };
 
-    const stageInfo = stageNames[stage];
-    console.log(`\n${stageInfo.emoji} [SIMPLE PIPELINE] Stage ${stageInfo.num}/4: ${stage.toUpperCase()}`);
+    const stageInfo = stageNames[stage] || { num: 0, emoji: "⚙️" };
+    console.log(`\n${stageInfo.emoji} [PIPELINE] Stage ${stageInfo.num}/6: ${stage.toUpperCase()}`);
 
     const startedAt = nowIso();
     const startedMs = Date.now();
 
-    state = updateStageState(state, stage as "capture" | "extract" | "dedup" | "styleguide", {
+    state = updateStageState(state, stage, {
       status: "running",
       startedAt,
       completedAt: undefined,
@@ -225,14 +236,22 @@ export async function runSimplifiedStyleMdPipeline(
       stage,
       startedAt,
     });
+    await emitAndLog({
+      type: "stylemd_action",
+      source: "system",
+      runId: runIdValue,
+      stage,
+      level: "info",
+      message: `${stage} stage started.`,
+    });
     await publishState();
 
     try {
       const output = await handler();
       const durationMs = Date.now() - startedMs;
-      console.log(`✅ [SIMPLE PIPELINE] Stage ${stageInfo.num}/4 complete (${durationMs}ms)\n`);
+      console.log(`✅ [PIPELINE] Stage ${stageInfo.num}/6 complete (${durationMs}ms)\n`);
 
-      state = updateStageState(state, stage as "capture" | "extract" | "dedup" | "styleguide", {
+      state = updateStageState(state, stage, {
         status: "completed",
         completedAt: nowIso(),
         durationMs,
@@ -245,11 +264,30 @@ export async function runSimplifiedStyleMdPipeline(
         stage,
         durationMs,
       });
+      await emitAndLog({
+        type: "stylemd_action",
+        source: "system",
+        runId: runIdValue,
+        stage,
+        level: "info",
+        message: `${stage} stage completed.`,
+        detail: { duration_ms: durationMs },
+      });
       await publishState();
       return output;
     } catch (error) {
       const durationMs = Date.now() - startedMs;
-      state = updateStageState(state, stage as "capture" | "extract" | "dedup" | "styleguide", {
+      const stageArtifacts =
+        error &&
+        typeof error === "object" &&
+        "artifacts" in error &&
+        Array.isArray((error as { artifacts?: unknown }).artifacts)
+          ? ((error as { artifacts: StyleMdArtifactRecord[] }).artifacts)
+          : [];
+      if (stageArtifacts.length > 0) {
+        registerArtifacts(stageArtifacts);
+      }
+      state = updateStageState(state, stage, {
         status: "failed",
         completedAt: nowIso(),
         durationMs,
@@ -261,6 +299,18 @@ export async function runSimplifiedStyleMdPipeline(
         runId: runIdValue,
         stage,
         error: errorToMessage(error),
+      });
+      await emitAndLog({
+        type: "stylemd_action",
+        source: "system",
+        runId: runIdValue,
+        stage,
+        level: "error",
+        message: `${stage} stage failed.`,
+        detail: {
+          duration_ms: durationMs,
+          error: errorToMessage(error),
+        },
       });
       await publishState();
       throw error;
@@ -310,11 +360,12 @@ export async function runSimplifiedStyleMdPipeline(
     provider: runtime.provider,
     model: runtime.model,
     startedAt: state.startedAt,
-    stages: ["capture", "extract", "dedup", "styleguide"],
+    stages: ["capture", "extract", "dedup", "curate", "styleguide", "showcase"],
   });
 
   let fullScreenshotPath = "";
   let screenshotBase64Var = "";
+  let extractionMetadataVar: any = null;
 
   try {
     browser = await chromium.launch(getPlaywrightLaunchOptions());
@@ -340,43 +391,47 @@ export async function runSimplifiedStyleMdPipeline(
         timeout: 90_000,
       });
 
-      console.log(`\n📸 [SIMPLE PIPELINE] Stage 1: CAPTURE - Taking screenshot at ${url}`);
+      console.log(`\n📸 [STYLEMD] Stage 1/6: CAPTURE - Taking screenshot at ${url}`);
       const capture = await runCaptureStage({
         runId: runIdValue,
         page: page!,
         signal,
       });
       fullScreenshotPath = capture.result.fullScreenshotPath;
-      console.log(`✅ [SIMPLE PIPELINE] Stage 1 complete: viewport ${capture.result.viewport.width}x${capture.result.viewport.height}px, full page height ${capture.result.documentHeight}px`);
-
+      
       registerArtifacts(capture.artifacts);
       await publishState();
 
       // --- Save screenshot to MongoDB immediately after capture ---
       try {
-        // --- STABILIZED SCREENSHOT FLOW ---
-        console.log(`[SCREENSHOT] Capturing directly to buffer...`);
         const buffer = await page!.screenshot({
           type: "jpeg",
           quality: 60,
           fullPage: true,
         });
 
-        console.log(`[SCREENSHOT] Compressing with sharp...`);
         const compressedBuffer = await sharp(buffer)
           .resize({ width: 1000, withoutEnlargement: true })
           .jpeg({ quality: 60 })
           .toBuffer();
 
-        console.log(`[SCREENSHOT] final size: ${compressedBuffer.length} bytes`);
-
-        if (compressedBuffer.length > 1_000_000) {
-          console.warn(`[SCREENSHOT] too large (${compressedBuffer.length} bytes), skipping DB save`);
-          return;
+        if (compressedBuffer.length <= 1_500_000) {
+          screenshotBase64Var = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
+          
+          await safeWrite(() =>
+            StyleMdRun.updateOne(
+              { runId: runIdValue },
+              { 
+                $set: { 
+                  screenshot: screenshotBase64Var,
+                  images: [screenshotBase64Var],
+                  updatedAt: new Date()
+                } 
+              }
+            )
+          );
+          runIdLog(runIdValue, "[SCREENSHOT] Persisted screenshot to MongoDB immediately.");
         }
-
-        screenshotBase64Var = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
-        console.log(`[SCREENSHOT] ✅ Captured screenshot in-memory for final persist.`);
       } catch (ssErr) {
         console.warn(`[SCREENSHOT] ⚠️ Failed to capture screenshot: ${ssErr instanceof Error ? ssErr.message : String(ssErr)}`);
       }
@@ -398,6 +453,19 @@ export async function runSimplifiedStyleMdPipeline(
           extractedComponents: output.result.components.length,
         },
       });
+
+      extractionMetadataVar = {
+        scannedElements: output.result.designTokenManifest?.metrics.totalElementsScanned,
+        durationMs: output.result.designTokenManifest?.metrics.extractionDurationMs,
+        confidenceScore: output.result.designTokenManifest?.metrics.confidenceScore,
+        primaryColors: output.result.designTokenManifest?.palette.primary,
+        typographyFamilies: output.result.designTokenManifest?.typography.display,
+        sectionCount: output.result.semanticStructure?.sections.length,
+        // Full manifests for frontend reconstruction
+        designTokenManifest: output.result.designTokenManifest,
+        semanticStructure: output.result.semanticStructure,
+      };
+
       await publishState();
       await mongoKeepAlive();
       return output.result;
@@ -426,18 +494,34 @@ export async function runSimplifiedStyleMdPipeline(
       return output.result;
     });
 
-    const curatedManifest = buildCuratedManifestFromComponents(
-      runIdValue,
-      url,
-      dedup.keptComponents,
-    );
+    const curate = await runStage("curate", async () => {
+      const output = await runCurateStage({
+        runId: runIdValue,
+        url,
+        dedupAgentManifestPath: dedup.dedupAgentManifestPath,
+        components: dedup.keptComponents,
+        signal,
+        runtime: kimiRuntime,
+      });
 
-    const curatedManifestArtifact = await writeStyleMdJson(runIdValue, "curated.json", curatedManifest);
-    registerArtifacts([curatedManifestArtifact]);
+      registerArtifacts(output.artifacts);
+      state = updateRunState(state, {
+        metrics: {
+          ...state.metrics,
+          curatedUnits: output.result.curatedManifest.units.length,
+          curatedComponents: output.result.keptComponentIds.length,
+          curationDeleted: output.result.deletedComponentIds.length,
+        },
+      });
+      await publishState();
+      await mongoKeepAlive();
+      return output.result;
+    });
 
-    const curatedManifestPath = curatedManifestArtifact.path;
-
+    let hasStyleguideWarning = false;
+    let responsiveHoverEvidencePath: string | undefined;
     let styleguideStageResult: Awaited<ReturnType<typeof runStyleguideStage>>["result"] | null = null;
+    
     try {
       styleguideStageResult = await runStage("styleguide", async () => {
         try {
@@ -451,95 +535,96 @@ export async function runSimplifiedStyleMdPipeline(
             deviceScaleFactor: config.viewport.deviceScaleFactor,
             userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
           });
-
-          await context.addInitScript(() => {
-            (window as any).__name = (t: any, v: any) => t;
-          });
           page = await context.newPage();
+
+          const enrichment = await runCuratedResponsiveHoverEvidenceStage({
+            runId: runIdValue,
+            url,
+            page: page!,
+            curatedManifest: curate.curatedManifest,
+            signal,
+          });
+          responsiveHoverEvidencePath = enrichment.result.evidencePath;
+          registerArtifacts(enrichment.artifacts);
+          await publishState();
         } catch (error) {
-          const warning = `Browser relaunch failed for styleguide stage; continuing. Reason: ${errorToMessage(error)}`;
-          runIdLog(runIdValue, `[STAGE_FAILED] styleguide_browser_launch: ${warning}`, "warn");
-          if (error instanceof Error && error.stack) {
-            runIdLog(runIdValue, `[STACK] ${error.stack}`, "debug");
-          }
-          
+          const warning = `Responsive/hover enrichment failed; continuing. Reason: ${errorToMessage(error)}`;
           state = updateRunState(state, {
             warnings: [...state.warnings, warning],
           });
-          await emitAndLog({
-            type: "stylemd_action",
-            source: "system",
-            runId: runIdValue,
-            stage: "styleguide",
-            level: "warn",
-            message: warning,
-          });
           await publishState();
+        } finally {
+          await closeBrowser();
         }
 
-        runIdLog(runIdValue, `Starting styleguide stage...`);
-        const startTime = Date.now();
         const output = await runStyleguideStage({
           runId: runIdValue,
           url,
-          curatedManifestPath,
-          curatedManifest,
+          curatedManifestPath: curate.curatedManifestPath,
+          curatedManifest: curate.curatedManifest,
+          responsiveHoverEvidencePath,
           signal,
-          runtime,
+          runtime: kimiRuntime,
         });
-        const duration = Date.now() - startTime;
-
-        runIdLog(runIdValue, `[DEBUG] Styleguide stage finished in ${duration}ms. outputMarkdownLength=${output.result.styleMarkdown?.length ?? 0}, artifactsCount=${output.artifacts.length}`);
-        
-        if (!output.result.styleMarkdown?.trim()) {
-          runIdLog(runIdValue, `[DEBUG] WARNING: Styleguide stage returned EMPTY markdown content.`, "warn");
-        }
 
         registerArtifacts(output.artifacts);
         await publishState();
-
-        await mongoKeepAlive(); // Step 3: Mid-stage keepalive
+        await mongoKeepAlive();
         return output.result;
       });
     } catch (error) {
       if (error instanceof StyleguideStageError) {
-        const warning = error.warning;
+        hasStyleguideWarning = true;
         state = updateRunState(state, {
-          warnings: [...state.warnings, warning],
-        });
-        await emitAndLog({
-          type: "stylemd_action",
-          source: "system",
-          runId: runIdValue,
-          stage: "styleguide",
-          level: "warn",
-          message: warning,
+          warnings: [...state.warnings, error.warning],
         });
         await publishState();
-        runIdLog(runIdValue, `[STAGE_FAILED] styleguide_stage UNKNOWN ERROR: ${errorToMessage(error)}`, "error");
-        if (error instanceof Error && error.stack) {
-          runIdLog(runIdValue, `[STACK] ${error.stack}`, "debug");
-        }
+      } else {
         throw error;
       }
     }
 
+    const showcaseStageResult = await runStage("showcase", async () => {
+      const output = await runShowcaseStage({
+        runId: runIdValue,
+        url,
+        curatedManifestPath: curate.curatedManifestPath,
+        curatedManifest: curate.curatedManifest,
+        responsiveHoverEvidencePath,
+        styleMdPath: styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runIdValue), "style.md"),
+        styleMarkdown: styleguideStageResult?.styleMarkdown,
+        evidenceAgentPath: styleguideStageResult?.evidenceAgentPath ?? join(getStyleMdRunDir(runIdValue), "styleguide", "evidence.agent.json"),
+        typographyInventoryPath: styleguideStageResult?.typographyInventoryPath,
+        typographyInventory: styleguideStageResult?.typographyInventory,
+        requiredTypographyFamilies: styleguideStageResult?.requiredTypographyFamilies,
+        fontsManifestPath: extract.fontsManifestPath,
+        fontsLocalCssPath: extract.fontsLocalCssPath,
+        signal,
+        runtime: kimiRuntime,
+      });
+
+      registerArtifacts(output.artifacts);
+      state = updateRunState(state, {
+        showcase: output.result.showcase,
+      });
+      await publishState();
+      await mongoKeepAlive();
+      return output.result;
+    });
+
+    if (showcaseStageResult.warning) {
+      state = updateRunState(state, {
+        warnings: [...state.warnings, showcaseStageResult.warning],
+      });
+      await publishState();
+    }
+
     state = updateRunState(state, {
-      status: state.warnings.length > 0 ? "completed_with_warnings" : "completed",
+      status: hasStyleguideWarning || state.warnings.length > 0 ? "completed_with_warnings" : "completed",
       completedAt: nowIso(),
     });
 
-    const styleMdPath = styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runIdValue), "style.md");
-    let styleMdContent = "";
-    try {
-      styleMdContent = await readFile(styleMdPath, "utf-8");
-    } catch {
-      styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
-    }
-
-    // Use the already captured and compressed screenshot
-    const screenshotBase64 = screenshotBase64Var;
-
+    const styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
     const summary: StyleMdRunSummary = {
       runId: runIdValue,
       provider: runtime.provider,
@@ -548,21 +633,13 @@ export async function runSimplifiedStyleMdPipeline(
       status: state.status,
       startedAt: state.startedAt,
       completedAt: state.completedAt,
-      warnings: state.warnings,
+      warnings: [
+        ...state.warnings,
+        `Used ${kimiRuntime.provider} for curation and generation stages.`,
+      ],
       artifacts: state.artifacts,
-      metrics: {
-        ...state.metrics,
-        dedupedComponents: dedup.keptComponents.length,
-        duplicatesDeleted: dedup.deletedComponentIds.length,
-        curatedUnits: curatedManifest.units.length,
-        curatedComponents: curatedManifest.kept_component_ids.length,
-        curationDeleted: 0,
-      },
-      showcase: {
-        available: false,
-        canonicalUrl: "",
-        latestUrl: "",
-      },
+      metrics: state.metrics,
+      showcase: state.showcase,
     };
 
     const summaryArtifact = await persistStyleMdSummary(runIdValue, summary);
@@ -571,41 +648,29 @@ export async function runSimplifiedStyleMdPipeline(
     });
     await publishState();
 
-    // Step 3: Reconnect before final write
     if (mongoose.connection.readyState !== 1) {
-      console.warn("[MONGO] reconnecting before final write...");
       await connectDB();
     }
 
-    // 🔴 PRIMARY OUTPUT: Persist styleMd critically
     try {
-      if (styleMdContent.length < 100) {
-        runIdLog(runIdValue, `[DEBUG] WARNING: styleMdContent is very short (${styleMdContent.length} chars). Preview: "${styleMdContent.substring(0, 50)}..."`, "warn");
-        
-        if (!styleMdContent && scraped?.contentText) {
-          runIdLog(runIdValue, `[FALLBACK_TRIGGERED] styleMd is empty, will fallback to raw contentText in API response.`, "warn");
-        }
-      }
-
-      runIdLog(runIdValue, `Saving final StyleMdRun... (styleMdLength=${styleMdContent.length}, screenshotLength=${screenshotBase64Var.length})`);
-      
       await persistStyleMdAfterGeneration({
         url,
         runId: runIdValue,
         provider: runtime.provider,
         model: runtime.model,
         styleMd: styleMdContent,
-        screenshot: screenshotBase64Var, // Use the high-quality captured screenshot
+        screenshot: screenshotBase64Var,
         runStatus: summary.status,
-        brandAssets: scraped?.brandAssets, // Pass extracted brand assets
+        brandAssets: scraped?.brandAssets,
+        extractionMetadata: extractionMetadataVar,
         title: scraped?.title,
         description: scraped?.description,
         h1: scraped?.h1,
         canonical: scraped?.canonical,
       });
     } catch (dbErr) {
-      runIdLog(runIdValue, `CRITICAL: Final StyleMdRun persist failed: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`, "error");
-      throw dbErr; // Fail the pipeline if the primary output cannot be saved
+      console.error(`Final persist failed: ${errorToMessage(dbErr)}`);
+      throw dbErr;
     }
 
     await emitAndLog({
@@ -618,17 +683,13 @@ export async function runSimplifiedStyleMdPipeline(
       completedAt: summary.completedAt,
       styleMd: styleMdContent,
       warnings: summary.warnings,
-      showcase: {
-        available: false,
-        canonicalUrl: "",
-        latestUrl: "",
-      },
+      showcase: summary.showcase,
     });
 
     return {
       runId: runIdValue,
       styleMd: styleMdContent,
-      screenshot: screenshotBase64,
+      screenshot: screenshotBase64Var,
       model: runtime.model,
     };
   } catch (error) {

@@ -87,6 +87,8 @@ type StyleguideAgentEvidence = {
   full_screenshot: string;
   curated_manifest: string;
   responsive_hover_evidence: string | null;
+  design_token_manifest?: string | null; // NEW
+  semantic_structure?: string | null;     // NEW
   unit_count: number;
   units: Array<{
     unit_id: string;
@@ -556,6 +558,8 @@ async function buildStyleguideAgentEvidence(input: {
   curatedManifestPath: string;
   curatedManifest: StyleMdCuratedManifest;
   responsiveHoverEvidencePath?: string;
+  designTokenManifestPath?: string; // NEW
+  semanticStructurePath?: string;   // NEW
 }): Promise<StyleguideAgentEvidence> {
   const {
     runId,
@@ -564,6 +568,8 @@ async function buildStyleguideAgentEvidence(input: {
     curatedManifestPath,
     curatedManifest,
     responsiveHoverEvidencePath,
+    designTokenManifestPath,
+    semanticStructurePath,
   } = input;
 
   return {
@@ -573,6 +579,8 @@ async function buildStyleguideAgentEvidence(input: {
     full_screenshot: "full_screenshot.png",
     curated_manifest: toRunRelative(runDir, curatedManifestPath),
     responsive_hover_evidence: responsiveHoverEvidencePath ? toRunRelative(runDir, responsiveHoverEvidencePath) : null,
+    design_token_manifest: designTokenManifestPath ? toRunRelative(runDir, designTokenManifestPath) : null,
+    semantic_structure: semanticStructurePath ? toRunRelative(runDir, semanticStructurePath) : null,
     unit_count: curatedManifest.units.length,
     units: await Promise.all(curatedManifest.units.map(async (unit) => ({
       unit_id: unit.unit_id,
@@ -580,7 +588,8 @@ async function buildStyleguideAgentEvidence(input: {
       study_label: unit.study_label,
       reason: unit.reason,
       component_ids: [...unit.component_ids],
-      components: await Promise.all(unit.components.slice(0, 1).map(async (component) => {
+      // Increase component count per unit for denser evidence
+      components: await Promise.all(unit.components.slice(0, 3).map(async (component) => {
         const metadataJson = await safeReadJson(component.metadataPath);
         const domAgentText = await safeReadText(component.agentDomPath);
         const stylesAgentJson = await safeReadJson(component.agentStylesPath);
@@ -611,7 +620,7 @@ async function buildStyleguideAgentEvidence(input: {
             metadata: {
               children_count: typeof metadata?.childrenCount === "number" ? metadata.childrenCount : null,
             },
-            dom_excerpt: domAgentText ? cleanSnippet(domAgentText, 200) : "",
+            dom_excerpt: domAgentText ? cleanSnippet(domAgentText, 1000) : "",
             styles: toStringMap(stylesAgentJson),
             pseudo: {
               before: toStringMap(pseudoObj.before),
@@ -680,16 +689,21 @@ function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
     "All file paths are relative to the workspace root. Never prefix paths with '/'.",
     "For large JSON/text files, use Read with non-negative offset + limit windows.",
     "",
-    "Primary files to inspect:",
-    "- styleguide/evidence.agent.json",
-    "- component agent files under components/<id>/",
+    "Primary files to inspect (MANDATORY):",
+    "- styleguide/evidence.agent.json (Entry point)",
+    "- semantic_analysis.json (DESIGN TOKEN SOURCE OF TRUTH)",
+    "- semantic_structure.json (PAGE STRUCTURE SOURCE OF TRUTH)",
+    "- components/<id>/ (Specific component details)",
     "",
     "Output requirements:",
-    "1. Output markdown only (no JSON, no code fences, no preamble).",
-    "2. Focus on faithful reconstruction: composition, hierarchy, spacing rhythm, typography, colors/surfaces, interaction states, and responsive behavior.",
-    "3. Ground claims in evidence; use '[unconfirmed]' where evidence is weak.",
-    "4. Prefer concise but concrete implementation-facing guidance.",
-    "5. Typography section must explicitly cover all required observed families from run context.",
+    "1. Output markdown only (DESIGN.md format).",
+    "2. FOCUS ON VISUAL IDENTITY: Use palette, typography, and spacing from semantic_analysis.json as the primary ground truth to preserve brand personality.",
+    "3. ATMOSPHERIC DEPTH: Use semantic_structure.json to understand the surface hierarchy (canvas, hero, card, etc.) and preserve visual atmosphere.",
+    "4. IDENTIFY BRAND MOOD: Classify the site style (e.g., Cinematic, Brutalist, Luxury, Corporate) based on spacing, typography weight, and shadow usage.",
+    "5. COMPOSITED APPEARANCE: Prioritize the 'effective' backgrounds and area-weighted colors over raw CSS values.",
+    "6. SNAPPING: Use the normalized/snapped pixel values for spacing and radius.",
+    "7. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context.",
+    "8. GROUNDING: Every claim MUST be grounded in evidence; use '[unconfirmed]' where evidence is weak or missing.",
     "",
     "Run context (JSON):",
     JSON.stringify(promptInput, null, 2),
@@ -1897,6 +1911,9 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
     ? await safeReadJson(responsiveHoverEvidencePath) as StyleMdResponsiveHoverEvidence | null
     : null;
 
+  const semanticAnalysisPath = join(runDir, "semantic_analysis.json");
+  const semanticStructurePath = join(runDir, "semantic_structure.json");
+
   const evidenceAgent = await buildStyleguideAgentEvidence({
     runId,
     url,
@@ -1904,6 +1921,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
     curatedManifestPath,
     curatedManifest,
     responsiveHoverEvidencePath,
+    designTokenManifestPath: semanticAnalysisPath,
+    semanticStructurePath: semanticStructurePath,
   });
   const evidenceAgentArtifact = await writeStyleMdJson(runId, join("styleguide", "evidence.agent.json"), evidenceAgent);
   artifacts.push(evidenceAgentArtifact);
@@ -1942,7 +1961,11 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
     responsiveHoverEvidencePath,
     responsiveScreenshotPaths: collectResponsiveEvidenceScreenshotPaths(runDir, responsiveHoverEvidence),
     curatedManifest,
-    extraApprovedPaths: [typographyInventoryArtifact.path],
+    extraApprovedPaths: [
+      typographyInventoryArtifact.path,
+      semanticAnalysisPath,
+      semanticStructurePath,
+    ],
   });
 
   const systemPrompt = [
