@@ -194,8 +194,23 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    if (doc.status === "running") {
+      console.log(`[PIPELINE_PENDING] Pipeline running for slug=${slug}. [STYLEGUIDE_NOT_READY]`);
+      res.json({
+        ok: true,
+        status: "processing",
+        stage: "running",
+        pending: true
+      });
+      return;
+    }
+
     const styleMd = await resolveStyleMdForRunDoc(doc);
-    console.log(`[getBySlug] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback: ${!doc.styleMd})`);
+    if (doc.styleMd) {
+      console.log(`[CANONICAL_ARTIFACT_FOUND] Resolved styleMd for ${slug}. Length: ${styleMd.length}.`);
+    } else {
+      console.log(`[FALLBACK_TRIGGERED] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback: true)`);
+    }
 
     res.json({
       ok: true,
