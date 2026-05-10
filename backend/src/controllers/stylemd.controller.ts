@@ -269,7 +269,7 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
   try {
     const runs = await StyleMdRun.find({})
       .sort({ createdAt: -1 })
-      .select("url slug runId provider model status createdAt title screenshot")
+      .select("url slug runId provider model status createdAt title brandAssets")
       .lean<StyleMdRunDoc[]>();
 
     res.json({
@@ -279,7 +279,7 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
         url: r.url,
         slug: r.slug,
         title: (r as any).title,
-        screenshot: (r as any).screenshot,
+        brandAssets: (r as any).brandAssets,
         provider: r.provider ?? "kimi",
         model: r.model,
         status: r.status ?? "completed",
