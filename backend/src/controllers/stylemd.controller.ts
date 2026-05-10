@@ -90,7 +90,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    if (existing && !isValid && existing.status !== "running") {
+    if (!force && existing && !isValid && existing.status !== "running") {
       const retries = existing.retryCount || 0;
       if (retries >= 2) {
         console.warn(`[STYLEMD] max retries reached for ${slug}, returning last known data`);
