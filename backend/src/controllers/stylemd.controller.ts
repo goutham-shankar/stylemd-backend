@@ -196,18 +196,19 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
   try {
     const { slug } = req.params as { slug: string };
 
-    // 🔴 FETCH LATEST RUN BY SLUG (or specific runId)
-    // We check:
-    // 1. Exact slug match
-    // 2. Exact runId match
-    // 3. Normalized slug match (in case frontend passes full hostname)
+    // Ensure DB connection is live — this is a read-only route that may be called
+    // before any write route has established the connection (e.g. deep links).
+    try { await connectDB(); } catch { /* proceed — connection may already be open */ }
+
+    // Check by slug, runId, and normalized hostname slug so both
+    // /by-slug/fitgreenmind and /by-slug/stylemd_1778…  work.
     const normalizedSlug = slugFromUrl(slug.includes(".") ? `https://${slug}` : slug);
-    
+
     const doc = await StyleMdRun.findOne({
       $or: [
-        { slug }, 
+        { slug },
         { runId: slug },
-        { slug: normalizedSlug }
+        ...(normalizedSlug !== "unknown" ? [{ slug: normalizedSlug }] : []),
       ],
     })
     .sort({ createdAt: -1 })
@@ -221,11 +222,22 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
 
     if (doc.status === "running") {
       console.log(`[PIPELINE_PENDING] Pipeline running for slug=${slug}. [STYLEGUIDE_NOT_READY]`);
+      // Include a data envelope so fetchRunBySlugOrId (which checks !j.data) returns non-null
+      // and the frontend retry loop can correctly detect the "still running" state.
       res.json({
         ok: true,
-        status: "processing",
-        stage: "running",
-        pending: true
+        data: {
+          runId: doc.runId,
+          slug: doc.slug,
+          url: doc.url,
+          styleMd: "",
+          images: [],
+          provider: doc.provider,
+          model: doc.model,
+          status: "processing",
+          pending: true,
+          createdAt: (doc.createdAt as Date)?.toISOString?.() ?? String(doc.createdAt),
+        },
       });
       return;
     }
