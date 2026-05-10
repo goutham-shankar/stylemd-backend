@@ -104,6 +104,7 @@ function buildCuratedManifestFromComponents(
 export async function runSimplifiedStyleMdPipeline(
   url: string,
   provider: StyleMdProvider = "kimi",
+  forcedRunId?: string,
 ): Promise<{
   runId: string;
   styleMd: string;
@@ -116,7 +117,7 @@ export async function runSimplifiedStyleMdPipeline(
     throw new Error("Mongo not connected after retry");
   }
 
-  const id = runId();
+  const id = forcedRunId || runId();
   const runIdValue = id;
   const abortController = new AbortController();
   const signal = abortController.signal;
@@ -625,6 +626,19 @@ export async function runSimplifiedStyleMdPipeline(
     });
 
     const styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
+
+    // Extract structured design tokens from the stylemd-json block (extract once, persist twice)
+    let designTokens: Record<string, unknown> | null = null;
+    try {
+      const jsonMatch = styleMdContent.match(/```(?:stylemd-json|json)\s*\n([\s\S]*?)```/);
+      if (jsonMatch?.[1]) {
+        designTokens = JSON.parse(jsonMatch[1]);
+        runIdLog(runIdValue, `[DESIGN_TOKENS] Extracted designTokens from stylemd-json block.`);
+      }
+    } catch (parseErr) {
+      runIdLog(runIdValue, `[DESIGN_TOKENS] Failed to parse stylemd-json block: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`, "warn");
+    }
+
     const summary: StyleMdRunSummary = {
       runId: runIdValue,
       provider: runtime.provider,
@@ -659,6 +673,7 @@ export async function runSimplifiedStyleMdPipeline(
         provider: runtime.provider,
         model: runtime.model,
         styleMd: styleMdContent,
+        designTokens,
         screenshot: screenshotBase64Var,
         runStatus: summary.status,
         brandAssets: scraped?.brandAssets,

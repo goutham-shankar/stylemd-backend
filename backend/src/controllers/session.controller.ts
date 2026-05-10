@@ -13,10 +13,10 @@ export async function getSessionEvents(_req: Request, res: Response): Promise<vo
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  console.log("[SSE] Heartbeat started (15s interval)");
+  console.log("[SSE] Heartbeat started (10s interval)");
   const heartbeat = setInterval(() => {
     res.write(": ping\n\n");
-  }, 15000);
+  }, 10000);
 
   const reader = (webResponse.body as ReadableStream<Uint8Array>).getReader();
 

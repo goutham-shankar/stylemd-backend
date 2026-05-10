@@ -130,33 +130,32 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // --- Run the pipeline ---
-    // The pipeline now handles its own persistence into MongoDB.
-    const result = await runSimplifiedStyleMdPipeline(canonUrl, provider);
-
-    // Reset retry count on success (keyed by runId)
-    await safeWrite(() => StyleMdRun.updateOne({ runId: result.runId }, { $set: { retryCount: 0 } }));
+    // --- Run the pipeline in background ---
+    // Generate a runId here so we can return it immediately
+    const runIdValue = `stylemd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
-    const now = new Date();
-
-    const responseData = {
-      url: canonUrl,
-      slug,
-      runId: result.runId,
-      provider,
-      model: result.model,
-      styleMd: result.styleMd,
-      images: result.screenshot ? [result.screenshot] : [],
-      status: "completed",
-      createdAt: now.toISOString(),
-    };
-
-    runIdLog(result.runId, `[DEBUG] Sending API response. Payload keys: ${Object.keys(responseData).join(", ")}. styleMdLength=${responseData.styleMd?.length ?? 0}`);
-    
+    // Respond immediately
     res.json({
       ok: true,
-      data: responseData,
+      runId: runIdValue,
+      slug,
+      status: "running"
     });
+
+    // Start pipeline without awaiting
+    void (async () => {
+      try {
+        const result = await runSimplifiedStyleMdPipeline(canonUrl, provider, runIdValue);
+        
+        // Reset retry count on success
+        await safeWrite(() => StyleMdRun.updateOne({ runId: result.runId }, { $set: { retryCount: 0 } }));
+        
+        runIdLog(result.runId, `[DEBUG] Pipeline completed successfully. styleMdLength=${result.styleMd?.length ?? 0}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[runStyleMd] Pipeline background error for ${runIdValue}:`, message);
+      }
+    })();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[runStyleMd] error:", message);
@@ -219,6 +218,7 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
         slug: doc.slug,
         runId: doc.runId,
         styleMd,
+        designTokens: (doc as any).designTokens ?? null,
         images: doc.images ?? [],
         title: (doc as any).title,
         description: (doc as any).description,

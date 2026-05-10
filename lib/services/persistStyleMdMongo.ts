@@ -65,6 +65,7 @@ export type PersistStyleMdInput = {
   provider: string;
   model: string;
   styleMd: string;
+  designTokens?: Record<string, unknown> | null;
   screenshot: string; // base64 ONLY
   slug?: string;
   runStatus?: string;
@@ -127,6 +128,7 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
     provider: input.provider,
     model: input.model,
     styleMd,
+    designTokens: input.designTokens ?? null,
     status,
     updatedAt: now,
     title: input.title,

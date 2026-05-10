@@ -704,6 +704,7 @@ function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
     "6. SNAPPING: Use the normalized/snapped pixel values for spacing and radius.",
     "7. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context.",
     "8. GROUNDING: Every claim MUST be grounded in evidence; use '[unconfirmed]' where evidence is weak or missing.",
+    "9. STRUCTURED JSON: At the end of the markdown, include a fenced code block labeled `stylemd-json`. You MUST use ONLY these observed families: " + promptInput.required_typography_families.join(", ") + ". Schema: { \"typography\": { \"display\": \"Font Name\", \"body\": \"Font Name\", \"scale\": \"modern\" | \"editorial\" }, \"fonts\": [ { \"name\": \"Font Name\", \"role\": \"Display\" | \"Body\" | \"UI\" | \"Mono\" } ], \"palette\": [ { \"name\": \"Label\", \"hex\": \"#HEX\", \"desc\": \"role\" } ], \"mood\": \"MoodName\", \"radius\": \"sharp\" | \"medium\" | \"pill\" | \"organic\", \"spacing\": \"4px\" | \"8px\" | string, \"cornerRadius\": \"4px\" | \"8px\" | string, \"accentColor\": \"#HEX\" }.",
     "",
     "Run context (JSON):",
     JSON.stringify(promptInput, null, 2),
@@ -727,7 +728,7 @@ function buildRetryPrompt(input: {
     "The prior draft failed these checks:",
     ...qualityIssues.map((issue) => `- ${issue}`),
     "",
-    "Keep markdown only.",
+    "Keep markdown only, but ENSURE the `stylemd-json` block is present and accurate at the end.",
     "Use styleguide/evidence.agent.json as source of truth.",
     "",
     "Run context (JSON):",
@@ -777,6 +778,30 @@ function validateStyleguideMarkdownQuality(
     const familyPattern = new RegExp(escapeRegExp(family), "i");
     if (!familyPattern.test(markdown)) {
       issues.push(`missing required typography family '${family}' in markdown output`);
+    }
+  }
+
+  // Ensure stylemd-json block exists and contains all required families
+  const jsonMatch = markdown.match(/```(?:stylemd-json|json)\s*\n([\s\S]*?)```/);
+  if (!jsonMatch) {
+    issues.push("missing required 'stylemd-json' block at the end of output");
+  } else {
+    try {
+      const parsed = JSON.parse(jsonMatch[1]);
+      const fonts = parsed.fonts || [];
+      const jsonFamilies = new Set(fonts.map((f: any) => (f.name || "").toLowerCase()));
+      
+      for (const family of requiredTypographyFamilies) {
+        if (!jsonFamilies.has(family.toLowerCase())) {
+          issues.push(`structured JSON is missing required typography family '${family}'`);
+        }
+      }
+
+      if (!parsed.typography?.display || !parsed.typography?.body) {
+        issues.push("structured JSON is missing primary typography mapping (display/body)");
+      }
+    } catch {
+      issues.push("structured JSON block is not valid JSON");
     }
   }
 
