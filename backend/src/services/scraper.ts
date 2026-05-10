@@ -83,10 +83,27 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
 
     // 🔴 STEP 2: EXTRACT LOGO FROM DOM (CANDIDATES)
     const logoCandidates: { url: string; score: number }[] = [];
-    
+    let pageOrigin: string;
+    try {
+      pageOrigin = new URL(baseUrl).origin;
+    } catch {
+      pageOrigin = "";
+    }
+
     $("img").each((_, el) => {
       const src = $(el).attr("src");
       if (!src) return;
+
+      const absoluteUrl = resolveUrl(src);
+      if (!absoluteUrl) return;
+
+      // Only consider images served from the same origin — prevents picking up
+      // third-party partner/customer logos (e.g. Spotify logo on Anthropic's page).
+      try {
+        if (pageOrigin && new URL(absoluteUrl).origin !== pageOrigin) return;
+      } catch {
+        return;
+      }
 
       const alt = ($(el).attr("alt") || "").toLowerCase();
       const cls = ($(el).attr("class") || "").toLowerCase();
@@ -98,12 +115,6 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
       if (alt.includes("logo") || cls.includes("logo") || id.includes("logo")) score += 3;
       if ($(el).closest("header, nav, [id*='header'], [class*='header']").length) score += 2;
       if (src.includes("logo") || src.includes("brand")) score += 2;
-
-      const absoluteUrl = resolveUrl(src);
-      if (absoluteUrl) {
-        logoCandidates.push({ url: absoluteUrl, score });
-      }
-    });
 
     const bestLogoUrl = logoCandidates.sort((a, b) => b.score - a.score)[0]?.url;
 
