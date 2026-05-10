@@ -1,9 +1,34 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
+import { readFile } from "fs/promises";
 import { validateStyleMdProviderCredentials } from "@/lib/stylemd-artifacts/provider";
 import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
-import { connectMongo } from "@/lib/mongodb";
+import { connectDB, safeWrite } from "@/lib/mongodb";
+import {
+  slugFromUrl,
+} from "@/lib/services/persistStyleMdMongo";
+import { pageUrlVariantsForLookup, canonicalPageUrl } from "@/lib/services/pageUrlCanonical";
+import { resolveStyleMdForRunDoc } from "@/lib/services/resolveStyleMdFromStores";
 import { StyleMdRun } from "../models/StyleMdRun";
+import { ScrapedData } from "../models/ScrapedData";
+
+import { isValidScrapedRecord } from "../utils/validation";
+import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
+
+interface StyleMdRunDoc {
+  url: string;
+  slug?: string;
+  runId?: string;
+  provider?: string;
+  model?: string;
+  styleMd?: string;
+  images?: string[];
+  status?: string;
+  createdAt?: Date;
+  retryCount?: number;
+  contentText?: string;
+  rawHtml?: string;
+}
 
 const requestSchema = z.object({
   url: z.string().url(),
@@ -11,46 +36,10 @@ const requestSchema = z.object({
   force: z.boolean().optional().default(false),
 });
 
-/**
- * Generate a URL-friendly slug from a URL.
- * e.g. "https://www.youtube.com/watch?v=123" → "youtube"
- */
-function slugFromUrl(rawUrl: string): string {
-  try {
-    const hostname = new URL(rawUrl).hostname;
-    // Remove www. and any other common subdomains, keep the main domain name
-    const parts = hostname.replace(/^www\./, "").split(".");
-    // Take the second-to-last part (main domain name) if TLD is present
-    const name = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-    // Sanitise to URL-safe chars
-    return name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-  } catch {
-    return "unknown";
-  }
-}
-
-/**
- * Ensure a slug is unique in the DB. If "youtube" already exists,
- * try "youtube-2", "youtube-3", etc.
- */
-async function ensureUniqueSlug(base: string): Promise<string> {
-  const existing = await StyleMdRun.findOne({ slug: base }).lean();
-  if (!existing) return base;
-
-  for (let i = 2; i <= 999; i++) {
-    const candidate = `${base}-${i}`;
-    const clash = await StyleMdRun.findOne({ slug: candidate }).lean();
-    if (!clash) return candidate;
-  }
-  // Fallback: append timestamp
-  return `${base}-${Date.now()}`;
-}
-
 export async function clearCache(_req: Request, res: Response): Promise<void> {
   try {
-    await connectMongo();
-    await StyleMdRun.deleteMany({});
-    res.json({ ok: true, message: "Cache cleared" });
+    await safeWrite(() => StyleMdRun.deleteMany({}));
+    res.json({ ok: true, data: { message: "Cache cleared" } });
   } catch (err) {
     res
       .status(500)
@@ -59,33 +48,78 @@ export async function clearCache(_req: Request, res: Response): Promise<void> {
 }
 
 export async function runStyleMd(req: Request, res: Response): Promise<void> {
-  // The pipeline can run for 5–10 minutes. Disable the default socket timeout
-  // for this specific request so the connection stays open until completion.
   req.socket.setTimeout(0);
   res.setTimeout(0);
 
   try {
     const { url, provider, force } = requestSchema.parse(req.body);
-    await connectMongo();
+    const canonUrl = canonicalPageUrl(url);
+    const slug = slugFromUrl(canonUrl);
 
-    // --- Cache hit (bypassed when force=true) ---
-    const existing = await StyleMdRun.findOne({ url }).lean();
-    if (existing && !force) {
+    // --- Cache hit (find LATEST run for this slug) ---
+    const existing = await StyleMdRun.findOne({ slug })
+      .sort({ createdAt: -1 })
+      .lean<StyleMdRunDoc>();
+    
+    // 🟠 FIX: StyleMdRun does not have contentText/rawHtml, so isValidScrapedRecord fails.
+    // We check for status="completed" and non-empty styleMd.
+    const isValid = existing && 
+      existing.status === "completed" && 
+      existing.styleMd?.trim() && 
+      existing.images?.length;
+
+    console.log(`[STYLEMD] Checking cache for slug=${slug}. Found: ${existing ? "YES" : "NO"}, Valid: ${isValid ? "YES" : "NO"}, Force: ${force}`);
+
+    if (!force && isValid) {
+      console.log(`[STYLEMD] cache-hit (valid) slug=${slug}`);
       res.json({
         ok: true,
         data: {
           url: existing.url,
-          slug: existing.slug ?? slugFromUrl(existing.url),
+          slug: existing.slug,
           runId: existing.runId,
           styleMd: existing.styleMd,
-          screenshotUrl: existing.screenshotUrl,
-          screenshot: existing.screenshot ?? "",
+          images: existing.images ?? [],
           provider: existing.provider,
           model: existing.model,
           status: existing.status,
           createdAt: (existing.createdAt as Date)?.toISOString?.() ?? String(existing.createdAt),
         },
         cached: true,
+      });
+      return;
+    }
+
+    if (!force && existing && !isValid && existing.status !== "running") {
+      const retries = existing.retryCount || 0;
+      if (retries >= 2) {
+        console.warn(`[STYLEMD] max retries reached for ${slug}, returning last known data`);
+        res.json({
+          ok: true,
+          data: {
+            url: existing.url,
+            slug: existing.slug,
+            runId: existing.runId,
+            styleMd: existing.styleMd,
+            images: existing.images ?? [],
+            provider: existing.provider,
+            model: existing.model,
+            status: existing.status,
+            createdAt: (existing.createdAt as Date)?.toISOString?.() ?? String(existing.createdAt),
+          },
+          cached: true,
+        });
+        return;
+      }
+      
+      console.log(`[STYLEMD] invalid cache detected, re-scraping (attempt ${retries + 1}): ${slug}`);
+      await safeWrite(() => StyleMdRun.updateOne({ runId: existing.runId }, { $inc: { retryCount: 1 } }));
+    }
+
+    if (existing?.status === "running") {
+      res.status(409).json({
+        ok: false,
+        error: "A StyleMD run is already in progress for this website. Wait for it to finish.",
       });
       return;
     }
@@ -97,59 +131,57 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // --- Run the pipeline ---
-    console.log(`[STYLEMD] Force-refreshing url=${url}`);
-    const result = await runSimplifiedStyleMdPipeline(url, provider);
-
-    // Preserve the existing slug on a force-rerun so the public URL stays
-    // stable (e.g. /styles/fitgreenmind keeps working after a refresh).
-    const slug = (force && existing?.slug) ? existing.slug : await ensureUniqueSlug(slugFromUrl(url));
-    const now = new Date();
-    const runData = {
-      url,
-      slug,
-      provider,
-      model: result.model,
-      runId: result.runId,
-      styleMd: result.styleMd,
-      screenshotUrl: result.screenshotUrl || undefined,
-      screenshot: result.screenshot || undefined,
-      status: "completed",
-      createdAt: now,
-    };
-
-    // Use updateOne+upsert as the primary save path — atomically overwrites any existing
-    // document (matched by URL) or inserts a new one. If two concurrent requests for
-    // different URLs happen to generate the same slug, the unique slug index will throw
-    // E11000 — retry once with a timestamp-suffixed slug before giving up.
+    // --- Run the pipeline in background ---
+    // Generate a runId here so we can return it immediately
+    const runIdValue = `stylemd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    
+    // 🟢 Create the pending record BEFORE responding, so getBySlug always finds it
     try {
-      await StyleMdRun.updateOne({ url }, { $set: runData }, { upsert: true });
-    } catch (saveErr: unknown) {
-      const isSlugConflict =
-        saveErr instanceof Error &&
-        (saveErr as NodeJS.ErrnoException & { code?: string }).code === 11000 &&
-        saveErr.message.includes("slug");
-      if (!isSlugConflict) throw saveErr;
-      const fallbackSlug = `${slug}-${Date.now()}`;
-      await StyleMdRun.updateOne({ url }, { $set: { ...runData, slug: fallbackSlug } }, { upsert: true });
-      runData.slug = fallbackSlug;
+      await safeWrite(() =>
+        StyleMdRun.updateOne(
+          { runId: runIdValue },
+          {
+            $set: {
+              url: canonUrl,
+              slug,
+              runId: runIdValue,
+              provider,
+              status: "running",
+              styleMd: "",
+              images: [],
+              updatedAt: new Date(),
+            },
+            $setOnInsert: { createdAt: new Date() },
+          },
+          { upsert: true }
+        )
+      );
+    } catch (pendingErr) {
+      console.warn(`[runStyleMd] Failed to create pending record: ${pendingErr instanceof Error ? pendingErr.message : String(pendingErr)}`);
     }
 
+    // Respond immediately — frontend can now poll and will find the "running" record
     res.json({
       ok: true,
-      data: {
-        url,
-        slug,
-        provider,
-        model: result.model,
-        runId: result.runId,
-        styleMd: result.styleMd,
-        screenshotUrl: result.screenshotUrl,
-        screenshot: result.screenshot,
-        status: "completed",
-        createdAt: now.toISOString(),
-      },
+      runId: runIdValue,
+      slug,
+      status: "running"
     });
+
+    // Start pipeline without awaiting
+    void (async () => {
+      try {
+        const result = await runSimplifiedStyleMdPipeline(canonUrl, provider, runIdValue);
+        
+        // Reset retry count on success
+        await safeWrite(() => StyleMdRun.updateOne({ runId: result.runId }, { $set: { retryCount: 0 } }));
+        
+        runIdLog(result.runId, `[DEBUG] Pipeline completed successfully. styleMdLength=${result.styleMd?.length ?? 0}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[runStyleMd] Pipeline background error for ${runIdValue}:`, message);
+      }
+    })();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[runStyleMd] error:", message);
@@ -159,31 +191,67 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   }
 }
 
-/** GET /api/stylemd/by-slug/:slug — retrieve a cached run by its human-readable slug */
+/** GET /api/stylemd/by-slug/:slug */
 export async function getBySlug(req: Request, res: Response): Promise<void> {
   try {
     const { slug } = req.params as { slug: string };
-    await connectMongo();
 
-    // Look up by slug first, then fall back to runId for backwards compat
+    // 🔴 FETCH LATEST RUN BY SLUG (or specific runId)
+    // We check:
+    // 1. Exact slug match
+    // 2. Exact runId match
+    // 3. Normalized slug match (in case frontend passes full hostname)
+    const normalizedSlug = slugFromUrl(slug.includes(".") ? `https://${slug}` : slug);
+    
     const doc = await StyleMdRun.findOne({
-      $or: [{ slug }, { runId: slug }],
-    }).lean();
+      $or: [
+        { slug }, 
+        { runId: slug },
+        { slug: normalizedSlug }
+      ],
+    })
+    .sort({ createdAt: -1 })
+    .lean<StyleMdRunDoc>();
 
     if (!doc) {
+      console.warn(`[getBySlug] No run found for slug/runId/normalized: ${slug} / ${normalizedSlug}`);
       res.status(404).json({ ok: false, error: `No run found for slug: ${slug}` });
       return;
+    }
+
+    if (doc.status === "running") {
+      console.log(`[PIPELINE_PENDING] Pipeline running for slug=${slug}. [STYLEGUIDE_NOT_READY]`);
+      res.json({
+        ok: true,
+        status: "processing",
+        stage: "running",
+        pending: true
+      });
+      return;
+    }
+
+    const styleMd = await resolveStyleMdForRunDoc(doc);
+    if (doc.styleMd) {
+      console.log(`[CANONICAL_ARTIFACT_FOUND] Resolved styleMd for ${slug}. Length: ${styleMd.length}.`);
+    } else {
+      console.log(`[FALLBACK_TRIGGERED] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback: true)`);
     }
 
     res.json({
       ok: true,
       data: {
         url: doc.url,
-        slug: doc.slug ?? slugFromUrl(doc.url),
+        slug: doc.slug,
         runId: doc.runId,
-        styleMd: doc.styleMd ?? "",
-        screenshotUrl: doc.screenshotUrl ?? "",
-        screenshot: doc.screenshot ?? "",
+        styleMd,
+        designTokens: (doc as any).designTokens ?? null,
+        images: doc.images ?? [],
+        title: (doc as any).title,
+        description: (doc as any).description,
+        h1: (doc as any).h1,
+        canonical: (doc as any).canonical,
+        brandAssets: (doc as any).brandAssets,
+        screenshot: (doc as any).screenshot,
         provider: doc.provider,
         model: doc.model,
         status: doc.status,
@@ -191,25 +259,27 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
       },
     });
   } catch (err) {
+    console.error("[getBySlug] error:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 }
 
-/** GET /api/stylemd/runs — list all completed StyleMD runs for the library */
+/** GET /api/stylemd/runs */
 export async function listStyleMdRuns(req: Request, res: Response): Promise<void> {
   try {
-    await connectMongo();
     const runs = await StyleMdRun.find({})
       .sort({ createdAt: -1 })
-      .select("url slug runId provider model status createdAt")
-      .lean();
+      .select("url slug runId provider model status createdAt title brandAssets")
+      .lean<StyleMdRunDoc[]>();
 
     res.json({
       ok: true,
-      summaries: runs.map((r) => ({
+      data: runs.map((r) => ({
         id: r.runId ?? r.slug ?? r.url,
         url: r.url,
-        slug: r.slug ?? slugFromUrl(r.url),
+        slug: r.slug,
+        title: (r as any).title,
+        brandAssets: (r as any).brandAssets,
         provider: r.provider ?? "kimi",
         model: r.model,
         status: r.status ?? "completed",
@@ -217,6 +287,25 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
       })),
     });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
+  }
+}
+
+export async function fetchImageAsBase64(req: Request, res: Response): Promise<void> {
+  try {
+    const { path: filePath } = req.body as { path: string };
+    if (!filePath) {
+      res.status(400).json({ ok: false, error: "Missing path" });
+      return;
+    }
+
+    const buffer = await readFile(filePath);
+    const base64 = buffer.toString("base64");
+    const ext = filePath.toLowerCase().endsWith(".png") ? "png" : "jpeg";
+    const mimeType = ext === "png" ? "image/png" : "image/jpeg";
+
+    res.json({ ok: true, data: `data:${mimeType};base64,${base64}` });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
   }
 }

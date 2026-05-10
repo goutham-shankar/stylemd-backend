@@ -30,8 +30,11 @@ function resolveClaudeRuntimeConfig(): StyleMdRuntimeConfig {
 function resolveKimiRuntimeConfig(): StyleMdRuntimeConfig {
   const kimiApiKey = process.env.KIMI_API_KEY?.trim();
   if (!kimiApiKey) {
+    console.error("[PIPELINE] [DEBUG] KIMI_API_KEY IS MISSING IN ENVIRONMENT!");
     throw new Error("KIMI_API_KEY is required for stylemd artifact runs when provider is kimi.");
   }
+
+  console.log(`[PIPELINE] [DEBUG] KIMI_API_KEY loaded successfully. Length: ${kimiApiKey.length}. Starts with: ${kimiApiKey.substring(0, 5)}...`);
 
   return {
     provider: "kimi",

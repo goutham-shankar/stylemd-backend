@@ -127,3 +127,37 @@ export function isAbortError(error: unknown): boolean {
 
   return false;
 }
+
+export function getPlaywrightLaunchOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  const options: any = {
+    headless: true,
+    args: [
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  };
+
+  // If in production or explicit path provided, use system Chrome
+  if (isProduction || process.env.PLAYWRIGHT_CHROME_PATH) {
+    options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+    options.args.push("--no-sandbox", "--disable-setuid-sandbox");
+  }
+
+  return options;
+}
+
+/**
+ * Correlated logging for pipeline tracing.
+ */
+export function runIdLog(runId: string, message: string, level: "info" | "warn" | "error" | "debug" = "info") {
+  const prefix = `[runId=${runId}]`;
+  const fullMessage = `${prefix} ${message}`;
+  
+  switch (level) {
+    case "error": console.error(fullMessage); break;
+    case "warn": console.warn(fullMessage); break;
+    default: console.log(fullMessage); break;
+  }
+}
