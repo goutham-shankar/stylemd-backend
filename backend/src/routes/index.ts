@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { sessionRouter } from "./session";
-import { stylemdRunsRouter } from "./stylemdRuns";
 import { artifactsRouter } from "./artifacts";
 import { stylemdRouter } from "./stylemd";
 import { scrapedDataRouter } from "./scrapedData";
@@ -14,7 +13,6 @@ router.get("/health", (_req, res) => {
 });
 
 router.use("/api/session", sessionRouter);
-router.use("/api/stylemd-artifacts", stylemdRunsRouter);
 router.use("/api/stylemd-artifacts", artifactsRouter);
 router.use("/api/stylemd", stylemdRouter);
 router.use("/api/stylemd", downloadRouter);
