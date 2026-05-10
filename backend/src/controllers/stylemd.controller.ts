@@ -33,6 +33,7 @@ interface StyleMdRunDoc {
 const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
+  force: z.boolean().optional().default(false),
 });
 
 export async function clearCache(_req: Request, res: Response): Promise<void> {
@@ -51,7 +52,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   res.setTimeout(0);
 
   try {
-    const { url, provider } = requestSchema.parse(req.body);
+    const { url, provider, force } = requestSchema.parse(req.body);
     const canonUrl = canonicalPageUrl(url);
     const slug = slugFromUrl(canonUrl);
 
@@ -67,9 +68,9 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       existing.styleMd?.trim() && 
       existing.images?.length;
 
-    console.log(`[STYLEMD] Checking cache for slug=${slug}. Found: ${existing ? "YES" : "NO"}, Valid: ${isValid ? "YES" : "NO"}`);
+    console.log(`[STYLEMD] Checking cache for slug=${slug}. Found: ${existing ? "YES" : "NO"}, Valid: ${isValid ? "YES" : "NO"}, Force: ${force}`);
 
-    if (isValid) {
+    if (!force && isValid) {
       console.log(`[STYLEMD] cache-hit (valid) slug=${slug}`);
       res.json({
         ok: true,
