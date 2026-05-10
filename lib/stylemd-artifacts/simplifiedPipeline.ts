@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { readFile } from "node:fs/promises";
-import { fileToBase64 } from "@/lib/utils/fileToBase64";
+import sharp from "sharp";
+import mongoose from "mongoose";
+import { connectDB, safeWrite, mongoKeepAlive } from "@/lib/mongodb";
+import { scrape } from "@/backend/src/services/scraper";
+import { StyleMdRun } from "@/backend/src/models/StyleMdRun";
+import { ScrapedData } from "@/backend/src/models/ScrapedData";
+import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import {
   appendStyleMdLogLine,
   getStyleMdRunDir,
@@ -15,18 +21,23 @@ import {
   assertNotAborted,
   createInitialRunState,
   errorToMessage,
+  getPlaywrightLaunchOptions,
   isAbortError,
   mergeArtifact,
   nowIso,
+  runIdLog,
   updateRunState,
   updateStageState,
 } from "@/lib/stylemd-artifacts/helpers";
 import {
   runCaptureStage,
+  runCuratedResponsiveHoverEvidenceStage,
   runDedupStage,
   runExtractStage,
 } from "@/lib/stylemd-artifacts/stages";
-import { runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
+import { runCurateStage } from "@/lib/stylemd-artifacts/curation";
+import { runShowcaseStage, runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
+import { markStyleMdRunPendingInMongo, persistStyleMdAfterGeneration } from "@/lib/services/persistStyleMdMongo";
 import {
   resolveStyleMdRuntimeConfig,
   type StyleMdRuntimeConfig,
@@ -37,6 +48,7 @@ import {
   type StyleMdComponentEntry,
   type StyleMdCuratedManifest,
   type StyleMdPipelineConfig,
+  type StyleMdPipelineStageName,
   type StyleMdProvider,
   type StyleMdRunState,
   type StyleMdRunSummary,
@@ -92,22 +104,81 @@ function buildCuratedManifestFromComponents(
 export async function runSimplifiedStyleMdPipeline(
   url: string,
   provider: StyleMdProvider = "kimi",
+  forcedRunId?: string,
 ): Promise<{
   runId: string;
   styleMd: string;
-  screenshotUrl: string;
   screenshot: string;
   model: string;
 }> {
-  const id = runId();
+  // Step 3: Auto-recover in pipeline
+  await connectDB();
+  if (mongoose.connection.readyState !== 1) {
+    throw new Error("Mongo not connected after retry");
+  }
+
+  const id = forcedRunId || runId();
   const runIdValue = id;
   const abortController = new AbortController();
   const signal = abortController.signal;
   const runtime = resolveStyleMdRuntimeConfig(provider);
 
+  // Step 1 & 2: Collection-based Keep-Alive Ping at 10s frequency
+  const keepAliveInterval = setInterval(async () => {
+    await mongoKeepAlive();
+  }, 10000);
+
+  // 🔴 Mark run pending so the DB record exists for the screenshot
+  try {
+    await markStyleMdRunPendingInMongo({
+      url,
+      runId: runIdValue,
+      provider: runtime.provider,
+      model: runtime.model,
+    });
+  } catch (e) {
+    console.warn("[PIPELINE] early pending persist failed, continuing under unstable network", e);
+  }
+
+
+  // 🔴 STEP 1: MOVE SCRAPE TO START (In-memory only for now)
+  runIdLog(runIdValue, `Early scraping ${url}...`);
+  const canonUrl = canonicalPageUrl(url);
+  const scraped = await scrape(canonUrl);
+  
+  if (scraped) {
+    runIdLog(runIdValue, `[DEBUG] Scrape result: title="${scraped.title}", htmlLength=${scraped.rawHtml?.length ?? 0}, textLength=${scraped.contentText?.length ?? 0}, imagesCount=${scraped.images?.length ?? 0}`);
+  } else {
+    runIdLog(runIdValue, `[DEBUG] Scrape FAILED (returned null) for ${url}`, "warn");
+  }
+
+  // 🔴 STEP 2: OPTIONAL/NON-BLOCKING SCRAPED DATA PERSIST
+  if (scraped) {
+    // We do NOT wait for this to block the pipeline
+    safeWrite(() =>
+      ScrapedData.updateOne(
+        { url: canonUrl },
+        {
+          $set: {
+            ...scraped,
+            url: canonUrl,
+            updatedAt: new Date()
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      )
+    ).catch(e => {
+      runIdLog(runIdValue, `[FALLBACK_TRIGGERED] ScrapedData optional persist failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+    });
+  }
+
   const config = mergeConfig({});
 
   let state = createInitialRunState(runIdValue, url, runtime.provider, runtime.model);
+
+  // Use Kimi for curation and generation stages to reduce costs and use high-reasoning models
+  const kimiRuntime = resolveStyleMdRuntimeConfig("kimi");
 
   async function emitAndLog(event: StyleMdPipelineEventPayload): Promise<void> {
     const fullEvent = emitEvent(event as Parameters<typeof emitEvent>[0]);
@@ -132,25 +203,27 @@ export async function runSimplifiedStyleMdPipeline(
   }
 
   async function runStage<T>(
-    stage: "capture" | "extract" | "dedup" | "styleguide",
+    stage: StyleMdPipelineStageName,
     handler: () => Promise<T>,
   ): Promise<T> {
     assertNotAborted(signal);
 
-    const stageNames: Record<"capture" | "extract" | "dedup" | "styleguide", { num: number; emoji: string }> = {
+    const stageNames: Record<StyleMdPipelineStageName, { num: number; emoji: string }> = {
       capture: { num: 1, emoji: "📸" },
       extract: { num: 2, emoji: "🔍" },
       dedup: { num: 3, emoji: "🎯" },
-      styleguide: { num: 4, emoji: "✨" },
+      curate: { num: 4, emoji: "📋" },
+      styleguide: { num: 5, emoji: "✨" },
+      showcase: { num: 6, emoji: "🎪" },
     };
 
-    const stageInfo = stageNames[stage];
-    console.log(`\n${stageInfo.emoji} [SIMPLE PIPELINE] Stage ${stageInfo.num}/4: ${stage.toUpperCase()}`);
+    const stageInfo = stageNames[stage] || { num: 0, emoji: "⚙️" };
+    console.log(`\n${stageInfo.emoji} [PIPELINE] Stage ${stageInfo.num}/6: ${stage.toUpperCase()}`);
 
     const startedAt = nowIso();
     const startedMs = Date.now();
 
-    state = updateStageState(state, stage as "capture" | "extract" | "dedup" | "styleguide", {
+    state = updateStageState(state, stage, {
       status: "running",
       startedAt,
       completedAt: undefined,
@@ -164,14 +237,22 @@ export async function runSimplifiedStyleMdPipeline(
       stage,
       startedAt,
     });
+    await emitAndLog({
+      type: "stylemd_action",
+      source: "system",
+      runId: runIdValue,
+      stage,
+      level: "info",
+      message: `${stage} stage started.`,
+    });
     await publishState();
 
     try {
       const output = await handler();
       const durationMs = Date.now() - startedMs;
-      console.log(`✅ [SIMPLE PIPELINE] Stage ${stageInfo.num}/4 complete (${durationMs}ms)\n`);
+      console.log(`✅ [PIPELINE] Stage ${stageInfo.num}/6 complete (${durationMs}ms)\n`);
 
-      state = updateStageState(state, stage as "capture" | "extract" | "dedup" | "styleguide", {
+      state = updateStageState(state, stage, {
         status: "completed",
         completedAt: nowIso(),
         durationMs,
@@ -184,11 +265,30 @@ export async function runSimplifiedStyleMdPipeline(
         stage,
         durationMs,
       });
+      await emitAndLog({
+        type: "stylemd_action",
+        source: "system",
+        runId: runIdValue,
+        stage,
+        level: "info",
+        message: `${stage} stage completed.`,
+        detail: { duration_ms: durationMs },
+      });
       await publishState();
       return output;
     } catch (error) {
       const durationMs = Date.now() - startedMs;
-      state = updateStageState(state, stage as "capture" | "extract" | "dedup" | "styleguide", {
+      const stageArtifacts =
+        error &&
+        typeof error === "object" &&
+        "artifacts" in error &&
+        Array.isArray((error as { artifacts?: unknown }).artifacts)
+          ? ((error as { artifacts: StyleMdArtifactRecord[] }).artifacts)
+          : [];
+      if (stageArtifacts.length > 0) {
+        registerArtifacts(stageArtifacts);
+      }
+      state = updateStageState(state, stage, {
         status: "failed",
         completedAt: nowIso(),
         durationMs,
@@ -200,6 +300,18 @@ export async function runSimplifiedStyleMdPipeline(
         runId: runIdValue,
         stage,
         error: errorToMessage(error),
+      });
+      await emitAndLog({
+        type: "stylemd_action",
+        source: "system",
+        runId: runIdValue,
+        stage,
+        level: "error",
+        message: `${stage} stage failed.`,
+        detail: {
+          duration_ms: durationMs,
+          error: errorToMessage(error),
+        },
       });
       await publishState();
       throw error;
@@ -249,16 +361,15 @@ export async function runSimplifiedStyleMdPipeline(
     provider: runtime.provider,
     model: runtime.model,
     startedAt: state.startedAt,
-    stages: ["capture", "extract", "dedup", "styleguide"],
+    stages: ["capture", "extract", "dedup", "curate", "styleguide", "showcase"],
   });
 
   let fullScreenshotPath = "";
+  let screenshotBase64Var = "";
+  let extractionMetadataVar: any = null;
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+    browser = await chromium.launch(getPlaywrightLaunchOptions());
     context = await browser.newContext({
       viewport: {
         width: config.viewport.width,
@@ -281,17 +392,50 @@ export async function runSimplifiedStyleMdPipeline(
         timeout: 90_000,
       });
 
-      console.log(`\n📸 [SIMPLE PIPELINE] Stage 1: CAPTURE - Taking screenshot at ${url}`);
+      console.log(`\n📸 [STYLEMD] Stage 1/6: CAPTURE - Taking screenshot at ${url}`);
       const capture = await runCaptureStage({
         runId: runIdValue,
         page: page!,
         signal,
       });
       fullScreenshotPath = capture.result.fullScreenshotPath;
-      console.log(`✅ [SIMPLE PIPELINE] Stage 1 complete: captured ${capture.result.viewport.width}x${capture.result.viewport.height}px`);
-
+      
       registerArtifacts(capture.artifacts);
       await publishState();
+
+      // --- Save screenshot to MongoDB immediately after capture ---
+      try {
+        const buffer = await page!.screenshot({
+          type: "jpeg",
+          quality: 60,
+          fullPage: true,
+        });
+
+        const compressedBuffer = await sharp(buffer)
+          .resize({ width: 1000, withoutEnlargement: true })
+          .jpeg({ quality: 60 })
+          .toBuffer();
+
+        if (compressedBuffer.length <= 1_500_000) {
+          screenshotBase64Var = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
+          
+          await safeWrite(() =>
+            StyleMdRun.updateOne(
+              { runId: runIdValue },
+              { 
+                $set: { 
+                  screenshot: screenshotBase64Var,
+                  images: [screenshotBase64Var],
+                  updatedAt: new Date()
+                } 
+              }
+            )
+          );
+          runIdLog(runIdValue, "[SCREENSHOT] Persisted screenshot to MongoDB immediately.");
+        }
+      } catch (ssErr) {
+        console.warn(`[SCREENSHOT] ⚠️ Failed to capture screenshot: ${ssErr instanceof Error ? ssErr.message : String(ssErr)}`);
+      }
     });
 
     const extract = await runStage("extract", async () => {
@@ -310,8 +454,21 @@ export async function runSimplifiedStyleMdPipeline(
           extractedComponents: output.result.components.length,
         },
       });
-      await publishState();
 
+      extractionMetadataVar = {
+        scannedElements: output.result.designTokenManifest?.metrics.totalElementsScanned,
+        durationMs: output.result.designTokenManifest?.metrics.extractionDurationMs,
+        confidenceScore: output.result.designTokenManifest?.metrics.confidenceScore,
+        primaryColors: output.result.designTokenManifest?.palette.primary,
+        typographyFamilies: output.result.designTokenManifest?.typography.display,
+        sectionCount: output.result.semanticStructure?.sections.length,
+        // Full manifests for frontend reconstruction
+        designTokenManifest: output.result.designTokenManifest,
+        semanticStructure: output.result.semanticStructure,
+      };
+
+      await publishState();
+      await mongoKeepAlive();
       return output.result;
     });
 
@@ -334,30 +491,43 @@ export async function runSimplifiedStyleMdPipeline(
         },
       });
       await publishState();
-
+      await mongoKeepAlive();
       return output.result;
     });
 
-    const curatedManifest = buildCuratedManifestFromComponents(
-      runIdValue,
-      url,
-      dedup.keptComponents,
-    );
+    const curate = await runStage("curate", async () => {
+      const output = await runCurateStage({
+        runId: runIdValue,
+        url,
+        dedupAgentManifestPath: dedup.dedupAgentManifestPath,
+        components: dedup.keptComponents,
+        signal,
+        runtime: kimiRuntime,
+      });
 
-    const curatedManifestArtifact = await writeStyleMdJson(runIdValue, "curated.json", curatedManifest);
-    registerArtifacts([curatedManifestArtifact]);
+      registerArtifacts(output.artifacts);
+      state = updateRunState(state, {
+        metrics: {
+          ...state.metrics,
+          curatedUnits: output.result.curatedManifest.units.length,
+          curatedComponents: output.result.keptComponentIds.length,
+          curationDeleted: output.result.deletedComponentIds.length,
+        },
+      });
+      await publishState();
+      await mongoKeepAlive();
+      return output.result;
+    });
 
-    const curatedManifestPath = curatedManifestArtifact.path;
-
+    let hasStyleguideWarning = false;
+    let responsiveHoverEvidencePath: string | undefined;
     let styleguideStageResult: Awaited<ReturnType<typeof runStyleguideStage>>["result"] | null = null;
+    
     try {
       styleguideStageResult = await runStage("styleguide", async () => {
         try {
           assertNotAborted(signal);
-          browser = await chromium.launch({
-            headless: true,
-            args: ["--disable-blink-features=AutomationControlled"],
-          });
+          browser = await chromium.launch(getPlaywrightLaunchOptions());
           context = await browser.newContext({
             viewport: {
               width: config.viewport.width,
@@ -366,54 +536,48 @@ export async function runSimplifiedStyleMdPipeline(
             deviceScaleFactor: config.viewport.deviceScaleFactor,
             userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
           });
-
-          await context.addInitScript(() => {
-            (window as any).__name = (t: any, v: any) => t;
-          });
           page = await context.newPage();
+
+          const enrichment = await runCuratedResponsiveHoverEvidenceStage({
+            runId: runIdValue,
+            url,
+            page: page!,
+            curatedManifest: curate.curatedManifest,
+            signal,
+          });
+          responsiveHoverEvidencePath = enrichment.result.evidencePath;
+          registerArtifacts(enrichment.artifacts);
+          await publishState();
         } catch (error) {
-          const warning = `Browser relaunch failed for styleguide stage; continuing. Reason: ${errorToMessage(error)}`;
+          const warning = `Responsive/hover enrichment failed; continuing. Reason: ${errorToMessage(error)}`;
           state = updateRunState(state, {
             warnings: [...state.warnings, warning],
           });
-          await emitAndLog({
-            type: "stylemd_action",
-            source: "system",
-            runId: runIdValue,
-            stage: "styleguide",
-            level: "warn",
-            message: warning,
-          });
           await publishState();
+        } finally {
+          await closeBrowser();
         }
 
         const output = await runStyleguideStage({
           runId: runIdValue,
           url,
-          curatedManifestPath,
-          curatedManifest,
+          curatedManifestPath: curate.curatedManifestPath,
+          curatedManifest: curate.curatedManifest,
+          responsiveHoverEvidencePath,
           signal,
-          runtime,
+          runtime: kimiRuntime,
         });
 
         registerArtifacts(output.artifacts);
         await publishState();
-
+        await mongoKeepAlive();
         return output.result;
       });
     } catch (error) {
       if (error instanceof StyleguideStageError) {
-        const warning = error.warning;
+        hasStyleguideWarning = true;
         state = updateRunState(state, {
-          warnings: [...state.warnings, warning],
-        });
-        await emitAndLog({
-          type: "stylemd_action",
-          source: "system",
-          runId: runIdValue,
-          stage: "styleguide",
-          level: "warn",
-          message: warning,
+          warnings: [...state.warnings, error.warning],
         });
         await publishState();
       } else {
@@ -421,32 +585,58 @@ export async function runSimplifiedStyleMdPipeline(
       }
     }
 
+    const showcaseStageResult = await runStage("showcase", async () => {
+      const output = await runShowcaseStage({
+        runId: runIdValue,
+        url,
+        curatedManifestPath: curate.curatedManifestPath,
+        curatedManifest: curate.curatedManifest,
+        responsiveHoverEvidencePath,
+        styleMdPath: styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runIdValue), "style.md"),
+        styleMarkdown: styleguideStageResult?.styleMarkdown,
+        evidenceAgentPath: styleguideStageResult?.evidenceAgentPath ?? join(getStyleMdRunDir(runIdValue), "styleguide", "evidence.agent.json"),
+        typographyInventoryPath: styleguideStageResult?.typographyInventoryPath,
+        typographyInventory: styleguideStageResult?.typographyInventory,
+        requiredTypographyFamilies: styleguideStageResult?.requiredTypographyFamilies,
+        fontsManifestPath: extract.fontsManifestPath,
+        fontsLocalCssPath: extract.fontsLocalCssPath,
+        signal,
+        runtime: kimiRuntime,
+      });
+
+      registerArtifacts(output.artifacts);
+      state = updateRunState(state, {
+        showcase: output.result.showcase,
+      });
+      await publishState();
+      await mongoKeepAlive();
+      return output.result;
+    });
+
+    if (showcaseStageResult.warning) {
+      state = updateRunState(state, {
+        warnings: [...state.warnings, showcaseStageResult.warning],
+      });
+      await publishState();
+    }
+
     state = updateRunState(state, {
-      status: state.warnings.length > 0 ? "completed_with_warnings" : "completed",
+      status: hasStyleguideWarning || state.warnings.length > 0 ? "completed_with_warnings" : "completed",
       completedAt: nowIso(),
     });
 
-    const styleMdPath = styleguideStageResult?.styleMdPath ?? join(getStyleMdRunDir(runIdValue), "style.md");
-    let styleMdContent = "";
-    try {
-      styleMdContent = await readFile(styleMdPath, "utf-8");
-    } catch {
-      styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
-    }
+    const styleMdContent = styleguideStageResult?.styleMarkdown ?? "";
 
-let screenshotUrlPath = "";
-    let screenshotBase64 = "";
+    // Extract structured design tokens from the stylemd-json block (extract once, persist twice)
+    let designTokens: Record<string, unknown> | null = null;
     try {
-      const screenshotPath = join(getStyleMdRunDir(runIdValue), "full_screenshot.png");
-      screenshotUrlPath = `/styleguide-files/${runIdValue}/full_screenshot.png`;
-      // Convert screenshot to base64
-      screenshotBase64 = await fileToBase64(screenshotPath, "image/png");
-      console.log(`[SIMPLE PIPELINE] Screenshot saved as base64 (size: ${screenshotBase64.length} bytes)`);
-    } catch (err) {
-      screenshotUrlPath = "";
-      screenshotBase64 = "";
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${errMsg}`);
+      const jsonMatch = styleMdContent.match(/```(?:stylemd-json|json)\s*\n([\s\S]*?)```/);
+      if (jsonMatch?.[1]) {
+        designTokens = JSON.parse(jsonMatch[1]);
+        runIdLog(runIdValue, `[DESIGN_TOKENS] Extracted designTokens from stylemd-json block.`);
+      }
+    } catch (parseErr) {
+      runIdLog(runIdValue, `[DESIGN_TOKENS] Failed to parse stylemd-json block: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`, "warn");
     }
 
     const summary: StyleMdRunSummary = {
@@ -457,21 +647,13 @@ let screenshotUrlPath = "";
       status: state.status,
       startedAt: state.startedAt,
       completedAt: state.completedAt,
-      warnings: state.warnings,
+      warnings: [
+        ...state.warnings,
+        `Used ${kimiRuntime.provider} for curation and generation stages.`,
+      ],
       artifacts: state.artifacts,
-      metrics: {
-        ...state.metrics,
-        dedupedComponents: dedup.keptComponents.length,
-        duplicatesDeleted: dedup.deletedComponentIds.length,
-        curatedUnits: curatedManifest.units.length,
-        curatedComponents: curatedManifest.kept_component_ids.length,
-        curationDeleted: 0,
-      },
-      showcase: {
-        available: false,
-        canonicalUrl: "",
-        latestUrl: "",
-      },
+      metrics: state.metrics,
+      showcase: state.showcase,
     };
 
     const summaryArtifact = await persistStyleMdSummary(runIdValue, summary);
@@ -479,6 +661,33 @@ let screenshotUrlPath = "";
       artifacts: mergeArtifact(state.artifacts, summaryArtifact),
     });
     await publishState();
+
+    if (mongoose.connection.readyState !== 1) {
+      await connectDB();
+    }
+
+    try {
+      await persistStyleMdAfterGeneration({
+        url,
+        runId: runIdValue,
+        provider: runtime.provider,
+        model: runtime.model,
+        styleMd: styleMdContent,
+        designTokens,
+        screenshot: screenshotBase64Var,
+        runStatus: summary.status,
+        brandAssets: scraped?.brandAssets,
+        extractionMetadata: extractionMetadataVar,
+        title: scraped?.title,
+        description: scraped?.description,
+        h1: scraped?.h1,
+        canonical: scraped?.canonical,
+      });
+    } catch (dbErr) {
+      console.error(`Final persist failed: ${errorToMessage(dbErr)}`);
+      throw dbErr;
+    }
+
     await emitAndLog({
       type: "stylemd_run_completed",
       source: "system",
@@ -487,14 +696,15 @@ let screenshotUrlPath = "";
       model: runtime.model,
       status: summary.status,
       completedAt: summary.completedAt,
+      styleMd: styleMdContent,
       warnings: summary.warnings,
+      showcase: summary.showcase,
     });
 
     return {
       runId: runIdValue,
       styleMd: styleMdContent,
-      screenshotUrl: screenshotUrlPath,
-      screenshot: screenshotBase64,
+      screenshot: screenshotBase64Var,
       model: runtime.model,
     };
   } catch (error) {
@@ -526,8 +736,29 @@ let screenshotUrlPath = "";
     });
     await publishState();
 
+    // --- PERSIST FAILURE TO MONGODB ---
+    try {
+      const finalStatus = canceled ? "canceled" : "failed";
+      console.log(`[PIPELINE] marking run ${finalStatus}: ${runIdValue}`);
+      await connectDB();
+      await safeWrite(() =>
+        StyleMdRun.updateOne(
+          { runId: runIdValue },
+          {
+            $set: {
+              status: finalStatus,
+              updatedAt: new Date()
+            }
+          }
+        )
+      );
+    } catch (dbErr) {
+      console.warn(`[PIPELINE] Failed to persist failure status to MongoDB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+    }
+
     throw error;
   } finally {
+    clearInterval(keepAliveInterval);
     signal.removeEventListener("abort", onAbort);
     await closeBrowser();
   }

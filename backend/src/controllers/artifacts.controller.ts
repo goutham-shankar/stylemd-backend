@@ -53,8 +53,8 @@ export async function getArtifact(req: Request, res: Response): Promise<void> {
     }
 
     if (IMAGE_EXTENSIONS.has(ext)) {
-      const rawUrl = `/api/stylemd-artifacts/artifact?runId=${encodeURIComponent(parsed.runId)}&path=${encodeURIComponent(artifactPath)}&mode=raw`;
-      res.json({ ok: true, previewType: "image", rawUrl, mimeType });
+      const rawUrl = `/api/stylemd-artifacts/artifact?runId=${encodeURIComponent(parsed.runId)}&path=${encodeURIComponent(parsed.path)}&mode=raw`;
+      res.json({ ok: true, data: { previewType: "image", rawUrl, mimeType } });
       return;
     }
 
@@ -62,11 +62,11 @@ export async function getArtifact(req: Request, res: Response): Promise<void> {
       const rawText = await readFile(artifactPath, "utf8");
       const truncated = rawText.length > PREVIEW_TEXT_MAX_CHARS;
       const content = truncated ? `${rawText.slice(0, PREVIEW_TEXT_MAX_CHARS)}\n...[truncated]` : rawText;
-      res.json({ ok: true, previewType: "text", mimeType, truncated, content });
+      res.json({ ok: true, data: { previewType: "text", mimeType, truncated, content } });
       return;
     }
 
-    res.json({ ok: true, previewType: "unsupported", mimeType, message: "Preview not available." });
+    res.json({ ok: true, data: { previewType: "unsupported", mimeType, message: "Preview not available." } });
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

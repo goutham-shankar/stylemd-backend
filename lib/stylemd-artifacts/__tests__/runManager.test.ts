@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
-import { getStyleMdRunSummary } from "@/lib/stylemd-artifacts/runManager";
+import { getStyleMdRunDir, readStyleMdSummary } from "@/lib/stylemd-artifacts/artifacts";
 
 function makeRunId(): string {
   return `stylemd_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -40,7 +39,7 @@ test("getStyleMdRunSummary backfills provider/model for legacy summaries", async
 
   await writeFile(join(runDir, "summary.json"), JSON.stringify(legacySummary, null, 2));
 
-  const summary = await getStyleMdRunSummary(runId);
+  const summary = await readStyleMdSummary(runId);
   assert.ok(summary);
   assert.equal(summary?.provider, "claude");
   assert.equal(typeof summary?.model, "string");

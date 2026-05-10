@@ -1,5 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
-import { getLatestStyleMdShowcaseRunSummary } from "@/lib/stylemd-artifacts/runManager";
+import { StyleMdRun } from "../models/StyleMdRun";
+import { connectDB } from "@/lib/mongodb";
 
 export const pagesRouter = Router();
 
@@ -11,16 +12,33 @@ pagesRouter.get("/stylemd", (_req: Request, res: Response) => {
 
 pagesRouter.get("/styleguide", (req: Request, res: Response, next: NextFunction) => {
   (async () => {
-    const summary = await getLatestStyleMdShowcaseRunSummary();
-    if (!summary || !summary.showcase.available) {
-      res.status(404).render("error", { statusCode: 404, message: "No styleguide is available yet. Run an analysis first.", title: "No Styleguide Found" });
+
+    // Find the latest completed run
+    const latest = await StyleMdRun.findOne({ 
+      status: { $in: ["completed", "completed_with_warnings"] },
+      runId: { $ne: null }
+    }).sort({ createdAt: -1 }).lean<{ runId: string } | null>();
+
+    if (!latest || !latest.runId) {
+      res.status(404).render("error", { 
+        statusCode: 404, 
+        message: "No styleguide is available yet. Run an analysis first.", 
+        title: "No Styleguide Found" 
+      });
       return;
     }
-    res.redirect(302, summary.showcase.canonicalUrl);
+
+    // Redirect to the latest run's styleguide viewer
+    res.redirect(302, `/styleguide/${latest.runId}`);
   })().catch(next);
 });
 
 pagesRouter.get("/styleguide/:runId", (req: Request, res: Response) => {
   const { runId } = req.params;
-  res.render("styleguide-viewer", { title: `Styleguide — ${runId}`, runId, showcaseSrc: `/styleguide-files/${encodeURIComponent(runId)}/styleguide/showcase.html`, downloadUrl: `/api/stylemd/download-styleguide-v2?runId=${encodeURIComponent(runId)}` });
+  res.render("styleguide-viewer", { 
+    title: `Styleguide — ${runId}`, 
+    runId, 
+    showcaseSrc: `/styleguide-files/${encodeURIComponent(runId)}/styleguide/showcase.html`, 
+    downloadUrl: `/api/stylemd/download-styleguide-v2?runId=${encodeURIComponent(runId)}` 
+  });
 });

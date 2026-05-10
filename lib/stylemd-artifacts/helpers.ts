@@ -115,15 +115,53 @@ export function errorToMessage(error: unknown): string {
 }
 
 export function isAbortError(error: unknown): boolean {
-  if (error instanceof StyleMdPipelineAbortedError) {
-    return true;
-  }
+  // Explicit pipeline cancellation
+  if (error instanceof StyleMdPipelineAbortedError) return true;
 
   if (error instanceof Error) {
-    const name = error.name.toLowerCase();
-    const message = error.message.toLowerCase();
-    return name.includes("abort") || message.includes("abort") || message.includes("cancel");
+    // Web API AbortError (fetch, EventSource, etc.)
+    if (error.name === "AbortError") return true;
+    // Node.js / Playwright AbortError subclass
+    if (error.constructor?.name === "AbortError") return true;
   }
 
+  // Do NOT match "abort" or "cancel" in the error *message* — Playwright throws
+  // errors like "net::ERR_ABORTED" or "Navigation was aborted" for network-level
+  // failures that are NOT intentional pipeline cancellations. Broad message
+  // matching causes real failures to be silently classified as "canceled".
   return false;
+}
+
+export function getPlaywrightLaunchOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  const options: any = {
+    headless: true,
+    args: [
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  };
+
+  // If in production or explicit path provided, use system Chrome
+  if (isProduction || process.env.PLAYWRIGHT_CHROME_PATH) {
+    options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome";
+    options.args.push("--no-sandbox", "--disable-setuid-sandbox");
+  }
+
+  return options;
+}
+
+/**
+ * Correlated logging for pipeline tracing.
+ */
+export function runIdLog(runId: string, message: string, level: "info" | "warn" | "error" | "debug" = "info") {
+  const prefix = `[runId=${runId}]`;
+  const fullMessage = `${prefix} ${message}`;
+  
+  switch (level) {
+    case "error": console.error(fullMessage); break;
+    case "warn": console.warn(fullMessage); break;
+    default: console.log(fullMessage); break;
+  }
 }

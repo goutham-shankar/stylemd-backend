@@ -163,6 +163,7 @@ export type StyleMdRunCompletedEvent = BaseEvent & {
   model?: string;
   status: Exclude<StyleMdRunStatus, "idle" | "running">;
   completedAt?: string;
+  styleMd?: string;
   error?: string;
   warnings?: string[];
   showcase?: {
