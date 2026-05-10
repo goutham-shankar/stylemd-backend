@@ -112,16 +112,28 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       model: result.model,
       runId: result.runId,
       styleMd: result.styleMd,
-      screenshotUrl: result.screenshotUrl,
-      screenshot: result.screenshot,
+      screenshotUrl: result.screenshotUrl || undefined,
+      screenshot: result.screenshot || undefined,
       status: "completed",
       createdAt: now,
     };
 
-    // Use updateOne+upsert as the primary save path — this atomically overwrites
-    // any existing document (matched by URL) or inserts a new one, which eliminates
-    // E11000 duplicate-key errors on force-refresh or concurrent requests.
-    await StyleMdRun.updateOne({ url }, { $set: runData }, { upsert: true });
+    // Use updateOne+upsert as the primary save path — atomically overwrites any existing
+    // document (matched by URL) or inserts a new one. If two concurrent requests for
+    // different URLs happen to generate the same slug, the unique slug index will throw
+    // E11000 — retry once with a timestamp-suffixed slug before giving up.
+    try {
+      await StyleMdRun.updateOne({ url }, { $set: runData }, { upsert: true });
+    } catch (saveErr: unknown) {
+      const isSlugConflict =
+        saveErr instanceof Error &&
+        (saveErr as NodeJS.ErrnoException & { code?: string }).code === 11000 &&
+        saveErr.message.includes("slug");
+      if (!isSlugConflict) throw saveErr;
+      const fallbackSlug = `${slug}-${Date.now()}`;
+      await StyleMdRun.updateOne({ url }, { $set: { ...runData, slug: fallbackSlug } }, { upsert: true });
+      runData.slug = fallbackSlug;
+    }
 
     res.json({
       ok: true,

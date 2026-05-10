@@ -443,10 +443,10 @@ let screenshotUrlPath = "";
       screenshotBase64 = await fileToBase64(screenshotPath, "image/png");
       console.log(`[SIMPLE PIPELINE] Screenshot saved as base64 (size: ${screenshotBase64.length} bytes)`);
     } catch (err) {
-      screenshotUrlPath = "";
-      screenshotBase64 = "";
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn(`[SIMPLE PIPELINE] Failed to convert screenshot to base64: ${errMsg}`);
+      console.warn(`[SIMPLE PIPELINE] Screenshot unavailable: ${errMsg}`);
+      // Leave both paths as empty strings; the controller stores them as undefined
+      // (falsy check) so the frontend can distinguish missing from not-yet-generated.
     }
 
     const summary: StyleMdRunSummary = {
