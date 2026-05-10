@@ -134,7 +134,32 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     // Generate a runId here so we can return it immediately
     const runIdValue = `stylemd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     
-    // Respond immediately
+    // 🟢 Create the pending record BEFORE responding, so getBySlug always finds it
+    try {
+      await safeWrite(() =>
+        StyleMdRun.updateOne(
+          { runId: runIdValue },
+          {
+            $set: {
+              url: canonUrl,
+              slug,
+              runId: runIdValue,
+              provider,
+              status: "running",
+              styleMd: "",
+              images: [],
+              updatedAt: new Date(),
+            },
+            $setOnInsert: { createdAt: new Date() },
+          },
+          { upsert: true }
+        )
+      );
+    } catch (pendingErr) {
+      console.warn(`[runStyleMd] Failed to create pending record: ${pendingErr instanceof Error ? pendingErr.message : String(pendingErr)}`);
+    }
+
+    // Respond immediately — frontend can now poll and will find the "running" record
     res.json({
       ok: true,
       runId: runIdValue,
