@@ -129,23 +129,20 @@ export function isAbortError(error: unknown): boolean {
 }
 
 export function getPlaywrightLaunchOptions() {
-  const options: any = {
+  return {
+    executablePath: process.env.PLAYWRIGHT_CHROME_PATH || "/usr/bin/google-chrome",
     headless: true,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
+      "--disable-gpu",
+      "--disable-extensions",
+      "--disable-background-networking",
+      "--disable-sync",
+      "--no-first-run",
     ],
   };
-
-  // Allow overriding the executable path via env var (e.g. for CI or custom installs).
-  // Otherwise Playwright uses its own bundled Chromium automatically.
-  if (process.env.PLAYWRIGHT_CHROME_PATH) {
-    options.executablePath = process.env.PLAYWRIGHT_CHROME_PATH;
-  }
-
-  return options;
 }
 
 /**
