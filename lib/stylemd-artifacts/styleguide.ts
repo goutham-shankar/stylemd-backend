@@ -696,15 +696,16 @@ function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
     "- components/<id>/ (Specific component details)",
     "",
     "Output requirements:",
-    "1. Output markdown only (DESIGN.md format).",
-    "2. FOCUS ON VISUAL IDENTITY: Use palette, typography, and spacing from semantic_analysis.json as the primary ground truth to preserve brand personality.",
-    "3. ATMOSPHERIC DEPTH: Use semantic_structure.json to understand the surface hierarchy (canvas, hero, card, etc.) and preserve visual atmosphere.",
-    "4. IDENTIFY BRAND MOOD: Classify the site style (e.g., Cinematic, Brutalist, Luxury, Corporate) based on spacing, typography weight, and shadow usage.",
-    "5. COMPOSITED APPEARANCE: Prioritize the 'effective' backgrounds and area-weighted colors over raw CSS values.",
-    "6. SNAPPING: Use the normalized/snapped pixel values for spacing and radius.",
-    "7. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context.",
-    "8. GROUNDING: Every claim MUST be grounded in evidence; use '[unconfirmed]' where evidence is weak or missing.",
-    "9. STRUCTURED JSON: At the end of the markdown, include a fenced code block labeled `stylemd-json`. You MUST use ONLY these observed families: " + promptInput.required_typography_families.join(", ") + ". Schema: { \"typography\": { \"display\": \"Font Name\", \"body\": \"Font Name\", \"scale\": \"modern\" | \"editorial\" }, \"fonts\": [ { \"name\": \"Font Name\", \"role\": \"Display\" | \"Body\" | \"UI\" | \"Mono\" } ], \"palette\": [ { \"name\": \"Label\", \"hex\": \"#HEX\", \"desc\": \"role\" } ], \"mood\": \"MoodName\", \"radius\": \"sharp\" | \"medium\" | \"pill\" | \"organic\", \"spacing\": \"4px\" | \"8px\" | string, \"cornerRadius\": \"4px\" | \"8px\" | string, \"accentColor\": \"#HEX\" }.",
+    "1. Output markdown only (DESIGN.md format). The output MUST start with '# ' (an H1 heading).",
+    "2. ABSOLUTELY NO RAW CSS: Do NOT copy, quote, or reproduce any CSS rules, selectors, properties, or stylesheet content from the workspace. Describe visual properties in plain English prose only (e.g., write 'buttons use 8px corner radius' not '.btn { border-radius: 8px }').",
+    "3. FOCUS ON VISUAL IDENTITY: Use palette, typography, and spacing from semantic_analysis.json as the primary ground truth to preserve brand personality.",
+    "4. ATMOSPHERIC DEPTH: Use semantic_structure.json to understand the surface hierarchy (canvas, hero, card, etc.) and preserve visual atmosphere.",
+    "5. IDENTIFY BRAND MOOD: Classify the site style (e.g., Cinematic, Brutalist, Luxury, Corporate) based on spacing, typography weight, and shadow usage.",
+    "6. COMPOSITED APPEARANCE: Prioritize the 'effective' backgrounds and area-weighted colors over raw CSS values.",
+    "7. SNAPPING: Use the normalized/snapped pixel values for spacing and radius.",
+    "8. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context.",
+    "9. GROUNDING: Every claim MUST be grounded in evidence; use '[unconfirmed]' where evidence is weak or missing.",
+    "10. STRUCTURED JSON: At the end of the markdown, include a fenced code block labeled `stylemd-json`. You MUST use ONLY these observed families: " + promptInput.required_typography_families.join(", ") + ". Schema: { \"typography\": { \"display\": \"Font Name\", \"body\": \"Font Name\", \"scale\": \"modern\" | \"editorial\" }, \"fonts\": [ { \"name\": \"Font Name\", \"role\": \"Display\" | \"Body\" | \"UI\" | \"Mono\" } ], \"palette\": [ { \"name\": \"Label\", \"hex\": \"#HEX\", \"desc\": \"role\" } ], \"mood\": \"MoodName\", \"radius\": \"sharp\" | \"medium\" | \"pill\" | \"organic\", \"spacing\": \"4px\" | \"8px\" | string, \"cornerRadius\": \"4px\" | \"8px\" | string, \"accentColor\": \"#HEX\" }.",
     "",
     "Run context (JSON):",
     JSON.stringify(promptInput, null, 2),
@@ -728,7 +729,8 @@ function buildRetryPrompt(input: {
     "The prior draft failed these checks:",
     ...qualityIssues.map((issue) => `- ${issue}`),
     "",
-    "Keep markdown only, but ENSURE the `stylemd-json` block is present and accurate at the end.",
+    "Keep markdown only. The output MUST start with '# ' (H1 heading). ABSOLUTELY NO raw CSS rules, selectors, or stylesheet content anywhere in the output — describe styles in plain English prose only.",
+    "ENSURE the `stylemd-json` block is present and accurate at the end.",
     "Use styleguide/evidence.agent.json as source of truth.",
     "",
     "Run context (JSON):",
@@ -769,6 +771,18 @@ function validateStyleguideMarkdownQuality(
   }
   if (!/^#\s+/m.test(markdown) && !/^##\s+/m.test(markdown)) {
     issues.push("markdown has no section headings");
+  }
+  if (!/^#\s+/m.test(markdown)) {
+    issues.push("markdown must start with an H1 heading (# Title), not CSS or other content");
+  }
+  if (/^\s*\/\*/.test(trimmed) || /^\s*[.#][\w-]+\s*\{/.test(trimmed)) {
+    issues.push("output starts with raw CSS rules — must start with an H1 markdown heading instead");
+  }
+  // Detect large inline CSS dumps anywhere in the output (outside fenced blocks)
+  const noFenced = markdown.replace(/```[\s\S]*?```/g, "");
+  const cssRuleCount = (noFenced.match(/\{[^}]{5,200}\}/g) ?? []).filter(b => /:\s*[^;]+;/.test(b)).length;
+  if (cssRuleCount > 5) {
+    issues.push(`output contains ${cssRuleCount} raw CSS rule blocks — do NOT copy stylesheet content, describe styles in prose only`);
   }
   if (/^\s*[\[{]/.test(trimmed) && /"units"\s*:/.test(trimmed)) {
     issues.push("output appears to be JSON, not markdown");
