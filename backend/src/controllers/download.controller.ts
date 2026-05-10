@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Request, Response } from "express";
 import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
+import { assertSafeRunId } from "../utils/validation";
 
 function rewriteFontUrlsToAbsolute(html: string, runId: string): string {
   const fontUrlRegex = /url\(\s*(["']?)([^"')]*\.(?:woff2?|ttf|otf|eot))\1\s*\)/gi;
@@ -20,6 +21,7 @@ export async function downloadStyleguideV2(req: Request, res: Response): Promise
       res.status(400).json({ ok: false, error: "runId parameter is required." });
       return;
     }
+    assertSafeRunId(runId);
     const runDir = getStyleMdRunDir(runId);
     const showcasePath = join(runDir, "styleguide", "showcase.html");
     const htmlBuffer = await readFile(showcasePath);
@@ -38,6 +40,6 @@ export async function downloadStyleguideV2(req: Request, res: Response): Promise
       res.status(404).json({ ok: false, error: "Styleguide HTML not found for this run." });
       return;
     }
-    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

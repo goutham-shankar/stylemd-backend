@@ -1,6 +1,5 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { StyleMdRun } from "../models/StyleMdRun";
-import { connectDB } from "@/lib/mongodb";
 
 export const pagesRouter = Router();
 

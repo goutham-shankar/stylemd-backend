@@ -3,6 +3,7 @@ import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
+import { assertSafeRunId } from "../utils/validation";
 
 const querySchema = z.object({
   runId: z.string().min(1),
@@ -37,6 +38,7 @@ function resolveArtifactPath(runId: string, requestedPath: string): string {
 export async function getArtifact(req: Request, res: Response): Promise<void> {
   try {
     const parsed = querySchema.parse({ runId: req.query["runId"], path: req.query["path"], mode: req.query["mode"] ?? "preview" });
+    assertSafeRunId(parsed.runId);
     const artifactPath = resolveArtifactPath(parsed.runId, parsed.path);
     const fileStat = await stat(artifactPath);
     if (!fileStat.isFile()) {

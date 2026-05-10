@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import path from "node:path";
 import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
+import { assertSafeRunId } from "./utils/validation";
 import { router as apiRouter } from "./routes/index";
 import { errorHandler } from "./middleware/errorHandler";
 
@@ -20,6 +21,12 @@ export function createApp(): express.Application {
   app.use(
     "/styleguide-files/:runId",
     (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      try {
+        assertSafeRunId(req.params.runId);
+      } catch {
+        res.status(400).json({ ok: false, error: "Invalid runId." });
+        return;
+      }
       const runDir = getStyleMdRunDir(req.params.runId);
       express.static(runDir, {
         dotfiles: "ignore",

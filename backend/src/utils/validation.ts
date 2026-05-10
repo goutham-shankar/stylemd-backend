@@ -1,3 +1,16 @@
+// Matches the pattern produced by runId() in simplifiedPipeline.ts
+const RUN_ID_RE = /^stylemd_\d+_[a-z0-9]+$/;
+
+/**
+ * Validate that a runId is safe to use in filesystem paths.
+ * Throws if the value contains path-traversal characters or doesn't match the expected pattern.
+ */
+export function assertSafeRunId(runId: unknown): asserts runId is string {
+  if (typeof runId !== "string" || !RUN_ID_RE.test(runId)) {
+    throw Object.assign(new Error("Invalid runId."), { statusCode: 400 });
+  }
+}
+
 /**
  * STRICT validity check for scraped records.
  * Ensures we don't cache poisoned or partial data.

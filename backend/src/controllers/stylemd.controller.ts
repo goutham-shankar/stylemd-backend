@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { readFile } from "fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { validateStyleMdProviderCredentials } from "@/lib/stylemd-artifacts/provider";
 import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
 import { connectDB, safeWrite } from "@/lib/mongodb";
@@ -9,6 +10,7 @@ import {
 } from "@/lib/services/persistStyleMdMongo";
 import { pageUrlVariantsForLookup, canonicalPageUrl } from "@/lib/services/pageUrlCanonical";
 import { resolveStyleMdForRunDoc } from "@/lib/services/resolveStyleMdFromStores";
+import { getStyleMdRunsBaseDir } from "@/lib/stylemd-artifacts/artifacts";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
 
@@ -161,7 +163,8 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[runStyleMd] error:", message);
     if (!res.headersSent) {
-      res.status(400).json({ ok: false, error: message });
+      const status = err instanceof z.ZodError ? 400 : 500;
+      res.status(status).json({ ok: false, error: message });
     }
   }
 }
@@ -268,14 +271,22 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
 export async function fetchImageAsBase64(req: Request, res: Response): Promise<void> {
   try {
     const { path: filePath } = req.body as { path: string };
-    if (!filePath) {
+    if (!filePath || typeof filePath !== "string") {
       res.status(400).json({ ok: false, error: "Missing path" });
       return;
     }
 
-    const buffer = await readFile(filePath);
+    const runsBaseDir = getStyleMdRunsBaseDir();
+    const resolvedPath = isAbsolute(filePath) ? resolve(filePath) : resolve(runsBaseDir, filePath);
+    const rel = relative(runsBaseDir, resolvedPath);
+    if (rel.startsWith("..")) {
+      res.status(400).json({ ok: false, error: "Invalid path." });
+      return;
+    }
+
+    const buffer = await readFile(resolvedPath);
     const base64 = buffer.toString("base64");
-    const ext = filePath.toLowerCase().endsWith(".png") ? "png" : "jpeg";
+    const ext = resolvedPath.toLowerCase().endsWith(".png") ? "png" : "jpeg";
     const mimeType = ext === "png" ? "image/png" : "image/jpeg";
 
     res.json({ ok: true, data: `data:${mimeType};base64,${base64}` });
