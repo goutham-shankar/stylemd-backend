@@ -116,8 +116,9 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     };
 
     try {
-      // We only convert logo and favicon to base64 for now to keep doc size low
-      if (bestLogoUrl) brandAssets.logo = await toBase64(bestLogoUrl);
+      // Logo priority: apple-touch-icon (always own brand) → favicon → DOM scoring
+      const logoUrl = appleIconUrl ?? faviconUrl ?? bestLogoUrl ?? null;
+      if (logoUrl) brandAssets.logo = await toBase64(logoUrl);
       if (faviconUrl) brandAssets.favicon = await toBase64(faviconUrl);
     } catch (e) {
       console.warn("[BRAND ASSETS] Base64 conversion failed:", e);
