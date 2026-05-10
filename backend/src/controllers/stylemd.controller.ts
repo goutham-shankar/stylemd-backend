@@ -8,6 +8,7 @@ import { StyleMdRun } from "../models/StyleMdRun";
 const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
+  force: z.boolean().optional().default(false),
 });
 
 /**
@@ -64,12 +65,12 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   res.setTimeout(0);
 
   try {
-    const { url, provider } = requestSchema.parse(req.body);
+    const { url, provider, force } = requestSchema.parse(req.body);
     await connectMongo();
 
-    // --- Cache hit ---
+    // --- Cache hit (bypassed when force=true) ---
     const existing = await StyleMdRun.findOne({ url }).lean();
-    if (existing) {
+    if (existing && !force) {
       res.json({
         ok: true,
         data: {
@@ -97,9 +98,12 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     }
 
     // --- Run the pipeline ---
+    console.log(`[STYLEMD] Force-refreshing url=${url}`);
     const result = await runSimplifiedStyleMdPipeline(url, provider);
 
-    const slug = await ensureUniqueSlug(slugFromUrl(url));
+    // Preserve the existing slug on a force-rerun so the public URL stays
+    // stable (e.g. /styles/fitgreenmind keeps working after a refresh).
+    const slug = (force && existing?.slug) ? existing.slug : await ensureUniqueSlug(slugFromUrl(url));
     const now = new Date();
     const runData = {
       url,
@@ -114,17 +118,10 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
       createdAt: now,
     };
 
-    // --- Persist (upsert-safe) ---
-    try {
-      await StyleMdRun.create(runData);
-    } catch (dbErr: any) {
-      if (dbErr.code === 11000) {
-        // Duplicate key – another request raced us; upsert.
-        await StyleMdRun.updateOne({ url }, { $set: runData });
-      } else {
-        throw dbErr;
-      }
-    }
+    // Use updateOne+upsert as the primary save path — this atomically overwrites
+    // any existing document (matched by URL) or inserts a new one, which eliminates
+    // E11000 duplicate-key errors on force-refresh or concurrent requests.
+    await StyleMdRun.updateOne({ url }, { $set: runData }, { upsert: true });
 
     res.json({
       ok: true,
