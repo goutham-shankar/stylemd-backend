@@ -1,31 +1,21 @@
 /**
  * Backend entry point.
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const dotenv = require("dotenv") as typeof import("dotenv");
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const path = require("node:path") as typeof import("node:path");
-
-dotenv.config({ path: path.resolve(__dirname, "../.env.local") });
-dotenv.config({ path: path.resolve(__dirname, "../../.env.local") });
-
+import "dotenv/config";
 import mongoose from "mongoose";
+import { connectDB } from "../../lib/mongodb";
 import { createApp } from "./app";
 import { config } from "./config/env";
 
 async function start(): Promise<void> {
+  console.log("---------------------------------------------------------------------------");
+  console.log(`[startup] BUILD_ID: ${Date.now()}`); // Detect stale PM2 dist code
   console.log(`[startup] booting StyleMD standalone backend on port ${config.port}`);
   console.log(`[startup] environment: ${config.nodeEnv}`);
-  console.log(`[startup] connecting to MongoDB dbName=${config.mongoDbName}`);
+  console.log("---------------------------------------------------------------------------");
 
   try {
-    await mongoose.connect(config.mongoUri, {
-      dbName: config.mongoDbName,
-      serverSelectionTimeoutMS: 60000,
-      socketTimeoutMS: 45000,
-      family: 4,
-    });
-    console.log("[startup] connected to MongoDB");
+    await connectDB();
   } catch (err) {
     console.error("[startup] failed to connect to MongoDB", err);
     process.exit(1);
