@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Design System Analysis of fit-green-mind.com</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:Eightiescomeback, 'Trebuchet MS', sans-serif,Arial,sans-serif;background:#ffffff;color:#21242e;-webkit-font-smoothing:antialiased;}
+  .nav{padding:0 48px;height:64px;background:#ffffff;border-bottom:1px solid #d0d0d0;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+  .nav-brand{font-weight:700;font-size:16px;}
+  .nav-cta{background:#f8e3e9;color:#21242e;border:2px solid #f8e3e9;border-radius:8px;padding:8px 22px;font-weight:600;font-size:15px;cursor:pointer;}
+  .hero{padding:96px 48px;background:#f8e3e9;max-width:1440px;margin:0 auto;}
+  .hero h1{font-family:Eightiescomeback, 'Trebuchet MS', sans-serif,Arial,sans-serif;font-size:64px;font-weight:700;line-height:1.05;color:#40806c;margin:0 0 24px;}
+  .hero p{font-size:18px;color:#40806c;max-width:720px;margin:0 0 36px;line-height:1.5;opacity:0.85;}
+  .hero-actions{display:flex;gap:12px;flex-wrap:wrap;}
+  .btn-primary{background:#f8e3e9;color:#21242e;border:2px solid #f8e3e9;border-radius:8px;height:48px;padding:0 27px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;}
+  .btn-secondary{background:#ffffff;color:#f8e3e9;border:2px solid #f8e3e9;border-radius:8px;height:48px;padding:0 27px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;}
+  section{padding:80px 48px;max-width:1440px;margin:0 auto;}
+  .section-eyebrow{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#60619c;margin-bottom:8px;display:block;}
+  .section-heading{font-family:Eightiescomeback, 'Trebuchet MS', sans-serif,Arial,sans-serif;font-size:36px;font-weight:700;letter-spacing:-0.5px;margin:0 0 32px;}
+  .palette-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;}
+  .swatch{border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;}
+  .swatch-fill{height:90px;}
+  .swatch-meta{padding:12px;}
+  .swatch-name{font-weight:600;font-size:14px;margin:0 0 2px;}
+  .swatch-hex{font-family:monospace;font-size:12px;color:#60619c;margin:0 0 6px;}
+  .swatch-role{font-size:12px;color:#60619c;margin:0;line-height:1.4;}
+  .type-row{display:grid;grid-template-columns:240px 1fr;gap:24px;padding:18px 0;border-top:1px solid #e0e0e0;align-items:baseline;}
+  .type-meta{font-family:monospace;font-size:11px;color:#60619c;line-height:1.6;}
+  .button-grid,.card-grid,.form-grid,.elevation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px;}
+  .demo-card{border:1px solid #e0e0e0;border-radius:12px;padding:24px;background:#ffffff;}
+  .label{font-size:12px;color:#60619c;display:block;margin-bottom:12px;font-weight:600;}
+  .feature-card{border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:24px;}
+  .feature-card h4{margin:0 0 8px;font-size:17px;font-weight:600;}
+  .feature-card p{margin:0;font-size:13px;line-height:1.5;opacity:0.75;}
+  .ex-input-demo{width:100%;background:#ffffff;border:1px solid #ccc;color:#21242e;padding:10px 14px;font-family:inherit;font-size:15px;border-radius:4px;}
+  .spacing-row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;}
+  .spacing-box{background:#f8e3e9;height:40px;border-radius:4px;}
+  .spacing-label{font-family:monospace;font-size:11px;color:#60619c;margin-top:6px;text-align:center;}
+  .radius-row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;}
+  .radius-box{width:90px;height:90px;background:#ffffff;border:2px solid #f8e3e9;display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:11px;color:#60619c;}
+  .radius-label{font-family:monospace;font-size:11px;color:#60619c;margin-top:6px;text-align:center;}
+  .elev-card{background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:24px;font-size:13px;color:#60619c;margin-bottom:4px;}
+  .responsive-table{width:100%;border-collapse:collapse;font-size:14px;}
+  .responsive-table th,.responsive-table td{text-align:left;padding:12px 16px;border-bottom:1px solid #e0e0e0;}
+  .responsive-table th{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#60619c;background:#f9f9f9;}
+  .device-ladder{display:flex;gap:12px;align-items:flex-end;}
+  .device-box{background:#ffffff;border:1px solid #e0e0e0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#60619c;}
+  .footer{padding:32px 48px;border-top:1px solid #e0e0e0;font-size:13px;color:#60619c;text-align:center;}
+  @media(max-width:768px){section{padding:48px 20px;}.type-row{grid-template-columns:1fr;gap:8px;}.section-heading{font-size:26px;}.hero{padding:48px 20px;}.hero h1{font-size:36px;}}
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <span class="nav-brand">fit-green-mind.com</span>
+  <button class="nav-cta">Design System</button>
+</nav>
+
+<div class="hero">
+  <h1>Design System Analysis</h1>
+  <p>Visual language extracted from <strong>fit-green-mind.com</strong> — colors, typography, components, spacing, and interaction patterns that define the brand experience.</p>
+  <div class="hero-actions">
+    <button class="btn-primary">View Components</button>
+    <button class="btn-secondary">Color Tokens</button>
+  </div>
+</div>
+
+<section>
+  <span class="section-eyebrow">01 — Foundations</span>
+  <h2 class="section-heading">Color Palette</h2>
+  <div class="palette-grid"><div class="swatch">
+  <div class="swatch-fill" style="background:#f8e3e9;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">primary</p>
+    <p class="swatch-hex">#f8e3e9</p>
+    <p class="swatch-role">Dominant — background, text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#40806c;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">canvas-soft</p>
+    <p class="swatch-hex">#40806c</p>
+    <p class="swatch-role">Dominant — text, background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#000000;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">ink</p>
+    <p class="swatch-hex">#000000</p>
+    <p class="swatch-role">Major — text, background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#f7fcff;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">accent-3</p>
+    <p class="swatch-hex">#f7fcff</p>
+    <p class="swatch-role">Accent — background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#0b9ac5;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">text-4</p>
+    <p class="swatch-hex">#0b9ac5</p>
+    <p class="swatch-role">Accent — text</p>
+  </div>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">02 — Foundations</span>
+  <h2 class="section-heading">Typography</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;max-width:720px;">
+    Body: Eightiescomeback · Heading: Eightiescomeback
+  </p>
+  <div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Eightiescomeback · 16px / 500<br>
+    lh 1.50 · ls 0<br>
+    <span style="color:#888;">DIV element · 20 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:500;line-height:24px;color:#f8e3e9;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Eightiescomeback · 16px / 500<br>
+    lh 1.50 · ls 0<br>
+    <span style="color:#888;">BODY element · 16 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:500;line-height:24px;color:#40806c;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    ui-label<br>
+    Eightiescomeback · 16px / 700<br>
+    lh 1.50 · ls 0<br>
+    <span style="color:#888;">LI element · 12 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:700;line-height:24px;color:#f8e3e9;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    ui-label<br>
+    Eightiescomeback · 16px / 700<br>
+    lh 1.31 · ls 0<br>
+    <span style="color:#888;">DIV element · 6 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:700;line-height:21px;color:#f8e3e9;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    display<br>
+    Eightiescomeback · 32px / 700<br>
+    lh 1.09 · ls 0<br>
+    <span style="color:#888;">DIV element · 2 uses</span>
+  </div>
+  <div style="font-size:32px;font-weight:700;line-height:35px;color:#f8e3e9;">The quick brown fox</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    micro<br>
+    Eightiescomeback · 12px / 500<br>
+    lh 1.50 · ls 0<br>
+    <span style="color:#888;">A element · 2 uses</span>
+  </div>
+  <div style="font-size:12px;font-weight:500;line-height:18px;color:#0b9ac5;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Eightiescomeback · 16px / 400<br>
+    lh 0.00 · ls 0<br>
+    <span style="color:#888;">HTML element · 1 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:400;line-height:normal;color:#000000;">The quick brown fox jumps over the lazy dog</div>
+</div>
+</section>
+<section>
+  <span class="section-eyebrow">03 — Components</span>
+  <h2 class="section-heading">Button Variants</h2>
+  <div class="button-grid">
+    <div class="demo-card">
+      <span class="label">button-primary · filled CTA</span>
+      <button style="background:#f8e3e9;color:#21242e;border:2px solid #f8e3e9;border-radius:8px;height:44px;padding:0 24px;font-size:15px;font-weight:600;cursor:pointer;">
+        Get Started
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Primary brand fill — the main call-to-action.</p>
+    </div>
+    <div class="demo-card">
+      <span class="label">button-secondary · outlined</span>
+      <button style="background:#ffffff;color:#f8e3e9;border:2px solid #f8e3e9;border-radius:8px;height:44px;padding:0 24px;font-size:15px;font-weight:600;cursor:pointer;">
+        Learn More
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Outlined secondary — lower emphasis action.</p>
+    </div>
+    <div class="demo-card">
+      <span class="label">button-ghost · text only</span>
+      <button style="background:transparent;color:#f8e3e9;border:none;border-radius:8px;height:44px;padding:0 24px;font-size:15px;font-weight:500;cursor:pointer;text-decoration:underline;">
+        View All
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Ghost / text button — minimal hierarchy.</p>
+    </div>
+    <div class="demo-card">
+      <span class="label">button-disabled · inactive state</span>
+      <button style="background:#cccccc;color:#888888;border:2px solid #cccccc;border-radius:8px;height:44px;padding:0 24px;font-size:15px;font-weight:600;cursor:not-allowed;opacity:0.6;">
+        Unavailable
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Disabled state — reduced opacity, no interaction.</p>
+    </div>
+  </div>
+</section>
+<section>
+  <span class="section-eyebrow">04 — Components</span>
+  <h2 class="section-heading">Cards &amp; Surfaces</h2>
+  <div class="card-grid"><div class="feature-card" style="background:#f8e3e9;color:#000000;">
+  <h4>section surface</h4>
+  <p style="color:#000000;opacity:0.7;">Background: #f8e3e9 · Text: #000000</p>
+</div>
+<div class="feature-card" style="background:#f8e3e9;color:#40806c;">
+  <h4>page canvas</h4>
+  <p style="color:#40806c;opacity:0.7;">Background: #f8e3e9 · Text: #40806c</p>
+</div>
+<div class="feature-card" style="background:#f8e3e9;color:#f8e3e9;">
+  <h4>card surface</h4>
+  <p style="color:#f8e3e9;opacity:0.7;">Background: #f8e3e9 · Text: #f8e3e9</p>
+</div>
+<div class="feature-card" style="background:#40806c;color:#f8e3e9;">
+  <h4>card surface</h4>
+  <p style="color:#f8e3e9;opacity:0.7;">Background: #40806c · Text: #f8e3e9</p>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">05 — Components</span>
+  <h2 class="section-heading">Form Elements</h2>
+  <div class="form-grid">
+    <div class="demo-card">
+      <span class="label">text-input · default</span>
+      <input class="ex-input-demo" placeholder="Enter text…" style="border-radius:4px;">
+    </div>
+    <div class="demo-card">
+      <span class="label">search-field + submit</span>
+      <div style="display:flex;gap:6px;">
+        <input class="ex-input-demo" placeholder="Search…" style="border-radius:4px;">
+        <button style="background:#f8e3e9;color:#21242e;border:none;border-radius:4px;padding:0 16px;font-size:13px;cursor:pointer;">Go</button>
+      </div>
+    </div>
+    <div class="demo-card">
+      <span class="label">select-dropdown</span>
+      <select style="width:100%;background:#fff;border:1px solid #ccc;color:#333;padding:10px 12px;font-size:14px;border-radius:4px;height:44px;">
+        <option>Choose an option</option>
+        <option>Option A</option>
+        <option>Option B</option>
+      </select>
+    </div>
+    <div class="demo-card">
+      <span class="label">textarea · multi-line</span>
+      <textarea style="width:100%;background:#fff;border:1px solid #ccc;color:#333;padding:10px 12px;font-size:14px;border-radius:4px;resize:vertical;min-height:72px;font-family:inherit;" placeholder="Your message…"></textarea>
+    </div>
+    <div class="demo-card">
+      <span class="label">checkbox + label</span>
+      <div style="display:flex;align-items:center;gap:10px;font-size:14px;">
+        <input type="checkbox" style="width:18px;height:18px;accent-color:#f8e3e9;">
+        <span>I agree to the terms</span>
+      </div>
+    </div>
+    <div class="demo-card">
+      <span class="label">radio group</span>
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:14px;">
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="demo" style="accent-color:#f8e3e9;"> Option One</label>
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="demo" style="accent-color:#f8e3e9;"> Option Two</label>
+      </div>
+    </div>
+  </div>
+</section>
+<section>
+  <span class="section-eyebrow">06 — Foundations</span>
+  <h2 class="section-heading">Spacing Scale</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;">Spacing values observed in the layout.</p>
+  <div class="spacing-row"><div>
+  <div class="spacing-box" style="width:24px;"></div>
+  <div class="spacing-label">lg<br>24px</div>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">07 — Foundations</span>
+  <h2 class="section-heading">Border Radius</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;">Corner radius tokens observed across components.</p>
+  <div class="radius-row"><div>
+  <div class="radius-box" style="border-radius:0px;">0px</div>
+  <div class="radius-label">none</div>
+</div>
+<div>
+  <div class="radius-box" style="border-radius:8px;">8px</div>
+  <div class="radius-label">sm</div>
+</div>
+<div>
+  <div class="radius-box" style="border-radius:32px;">32px</div>
+  <div class="radius-label">xl</div>
+</div>
+<div>
+  <div class="radius-box" style="border-radius:1366px;">1366px</div>
+  <div class="radius-label">full</div>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">08 — Foundations</span>
+  <h2 class="section-heading">Elevation &amp; Depth</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;">Box-shadow tokens extracted from CSS variables.</p>
+  <div class="elevation-grid"><div class="elev-card" style="box-shadow:rgba(0, 0, 0, 0.25) 0px 0px 5px 0px;border:none;">Observed element shadow — <code style="font-size:11px;">rgba(0, 0, 0, 0.25) 0px 0px 5px 0px</code></div></div>
+</section>
+<section>
+  <span class="section-eyebrow">09 — Responsive</span>
+  <h2 class="section-heading">Responsive Behavior</h2>
+  <table class="responsive-table">
+    <thead><tr><th>Breakpoint</th><th>Min-width</th><th>Key changes</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="device-ladder" style="margin-top:24px;"></div>
+  <p style="color:#60619c;margin-top:24px;font-size:14px;">
+    Breakpoints extracted from <strong style="color:#21242e;">https://fit-green-mind.com/</strong> stylesheet media queries.
+    Touch targets follow WCAG 2.1 AA minimum 44×44px.
+  </p>
+</section>
+
+<footer class="footer">Design system analysis of https://fit-green-mind.com/</footer>
+</body>
+</html>

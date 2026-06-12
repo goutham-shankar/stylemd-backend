@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Design System — dacoit.design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Mona+Sans:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;}
+body{margin:0;font-family:'Mona sans', sans-serif,'Helvetica Neue',Arial,sans-serif;background:#f0f0f0;color:#333333;-webkit-font-smoothing:antialiased;}
+.nav{padding:0 48px;height:64px;background:#000000;border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+.nav-brand{display:flex;align-items:center;gap:10px;}
+.nav-brand-dot{width:28px;height:28px;border-radius:50%;background:#de5531;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#ffffff;}
+.nav-brand span{font-weight:700;font-size:15px;color:#ffffff;letter-spacing:-0.2px;}
+.nav-links{display:flex;gap:32px;}
+.nav-links a{font-size:14px;color:rgba(255,255,255,0.6);text-decoration:none;font-weight:400;transition:color 0.2s;}
+.nav-links a:hover{color:#ffffff;}
+.hero{padding:96px 48px;background:#000000;max-width:100%;}
+.hero-inner{max-width:1344px;margin:0 auto;}
+.hero-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#de5531;margin:0 0 20px;display:block;}
+.hero h1{font-size:64px;font-weight:700;line-height:1.0;color:#ffffff;margin:0 0 20px;letter-spacing:-1.5px;}
+.hero h1 em{font-style:normal;color:#de5531;}
+.hero p{font-size:18px;color:rgba(240,240,240,0.65);max-width:640px;margin:0 0 40px;line-height:1.6;}
+.hero-meta{display:flex;gap:32px;flex-wrap:wrap;}
+.hero-stat{display:flex;flex-direction:column;gap:2px;}
+.hero-stat strong{font-size:22px;font-weight:700;color:#ffffff;}
+.hero-stat span{font-size:12px;color:rgba(240,240,240,0.65);text-transform:uppercase;letter-spacing:1px;}
+section{padding:80px 48px;max-width:1344px;margin:0 auto;}
+.section-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#de5531;margin-bottom:6px;display:block;}
+.section-heading{font-size:34px;font-weight:700;letter-spacing:-0.5px;margin:0 0 8px;color:#000000;}
+.section-sub{font-size:15px;color:#8d8d8d;margin:0 0 36px;line-height:1.5;}
+.divider{border:none;border-top:1px solid rgba(0,0,0,0.09);margin:0;}
+.palette-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;}
+.swatch{border:1px solid rgba(0,0,0,0.09);border-radius:10px;overflow:hidden;background:#ffffff;}
+.swatch-fill{height:88px;}
+.swatch-meta{padding:14px;}
+.swatch-name{font-weight:700;font-size:13px;margin:0 0 2px;color:#000000;}
+.swatch-hex{font-family:'Courier New',monospace;font-size:12px;color:#8d8d8d;margin:0 0 4px;}
+.swatch-role{font-size:11px;color:#8d8d8d;margin:0;line-height:1.5;}
+.swatch-contrast{font-size:10px;font-weight:600;margin-top:6px;padding:2px 6px;border-radius:20px;display:inline-block;}
+.contrast-pass{background:#e6f4ea;color:#1e7e34;}
+.contrast-fail{background:#fdecea;color:#c62828;}
+.type-table{width:100%;border-collapse:collapse;}
+.type-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#8d8d8d;padding:10px 16px;text-align:left;border-bottom:2px solid #e0e0e0;background:#f9f9f9;}
+.type-table td{padding:18px 16px;border-bottom:1px solid #e8e8e8;vertical-align:middle;}
+.type-meta{font-family:'Courier New',monospace;font-size:11px;color:#8d8d8d;line-height:1.7;}
+.type-role-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#f0f0f0;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
+.grid-2{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;}
+.grid-3{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;}
+.demo-card{border:1px solid rgba(0,0,0,0.09);border-radius:12px;padding:24px;background:#ffffff;}
+.demo-label{font-size:10px;color:#8d8d8d;display:block;margin-bottom:14px;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
+.demo-note{font-size:12px;color:#8d8d8d;margin:14px 0 0;line-height:1.5;}
+.nav-demo{background:#000000;padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;border-radius:8px;}
+.nav-demo-links{display:flex;gap:24px;}
+.nav-demo-links span{font-size:13px;color:rgba(255,255,255,0.6);cursor:pointer;}
+.nav-demo-links span.active{color:#ffffff;}
+.btn-site-primary{background:#de5531;color:#ffffff;border:none;border-radius:2800px;height:44px;padding:0 24px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:0.2px;}
+.btn-site-secondary{background:transparent;color:#de5531;border:1.5px solid #de5531;border-radius:2800px;height:44px;padding:0 24px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;}
+.btn-site-ghost{background:transparent;color:#de5531;border:none;border-radius:2800px;height:44px;padding:0 8px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;text-decoration:underline;text-underline-offset:3px;}
+.surface-card{border:1px solid rgba(0,0,0,0.09);padding:28px;position:relative;}
+.surface-card h4{margin:0 0 8px;font-size:17px;font-weight:700;}
+.surface-card p{margin:0;font-size:13px;line-height:1.6;opacity:0.7;}
+.ex-input{width:100%;background:#ffffff;border:1px solid #cccccc;border-radius:0;color:#333333;padding:11px 14px;font-family:inherit;font-size:15px;outline:none;transition:border-color 0.15s;}
+.ex-input::placeholder{color:#8d8d8d;}
+.contact-demo{background:#000000;padding:40px;color:#ffffff;max-width:560px;}
+.contact-demo h3{margin:0 0 6px;font-size:26px;font-weight:700;color:#ffffff;line-height:1.1;}
+.contact-demo p{margin:0 0 28px;font-size:14px;color:rgba(240,240,240,0.65);}
+.form-field{margin-bottom:20px;}
+.form-field label{display:block;font-size:12px;font-weight:600;color:rgba(240,240,240,0.65);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px;}
+.form-field input,.form-field textarea{width:100%;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);color:#ffffff;padding:12px 14px;font-family:inherit;font-size:15px;outline:none;resize:vertical;border-radius:0;}
+.form-field textarea{min-height:90px;}
+.spacing-row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end;}
+.spacing-item{display:flex;flex-direction:column;align-items:center;gap:8px;}
+.spacing-bar{background:#de5531;border-radius:2px;height:32px;}
+.spacing-label{font-family:'Courier New',monospace;font-size:10px;color:#8d8d8d;text-align:center;line-height:1.5;}
+.radius-row{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;}
+.radius-item{display:flex;flex-direction:column;align-items:center;gap:10px;}
+.radius-box{width:80px;height:80px;background:#ffffff;border:2px solid #000000;display:flex;align-items:center;justify-content:center;}
+.radius-label{font-family:'Courier New',monospace;font-size:10px;color:#8d8d8d;text-align:center;line-height:1.6;}
+.elevation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;}
+.elev-card{background:#ffffff;padding:24px;font-size:13px;color:#555;line-height:1.6;}
+.state-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;}
+.motion-row{display:flex;flex-direction:column;gap:16px;}
+.motion-row table{width:100%;border-collapse:collapse;font-size:14px;}
+.motion-row table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#8d8d8d;padding:10px 16px;text-align:left;border-bottom:2px solid #e0e0e0;background:#f9f9f9;}
+.motion-row table td{padding:14px 16px;border-bottom:1px solid #e8e8e8;font-size:13px;color:#333333;}
+.motion-row table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:#de5531;}
+.responsive-table{width:100%;border-collapse:collapse;font-size:14px;}
+.responsive-table th,.responsive-table td{text-align:left;padding:12px 16px;border-bottom:1px solid #e0e0e0;}
+.responsive-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#8d8d8d;background:#f9f9f9;}
+.responsive-table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:#000000;}
+.device-ladder{display:flex;gap:16px;align-items:flex-end;margin-top:32px;flex-wrap:wrap;}
+.device-box{background:#ffffff;border:1.5px solid #000000;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:8px;font-size:10px;font-family:'Courier New',monospace;color:#8d8d8d;gap:4px;}
+.footer{padding:32px 48px;border-top:1px solid rgba(0,0,0,0.09);font-size:13px;color:#8d8d8d;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;background:#f0f0f0;}
+@media(max-width:768px){section{padding:48px 20px;}.section-heading{font-size:26px;}.hero{padding:48px 20px;}.hero h1{font-size:38px;}.nav{padding:0 20px;}.footer{padding:24px 20px;}}</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="nav-brand">
+    <div class="nav-brand-dot">D</div>
+    <span>dacoit.design</span>
+  </div>
+  <div class="nav-links">
+    <a href="#">Home</a>
+    <a href="#">About</a>
+    <a href="#">Works</a>
+    <a href="#">Contact</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-inner">
+    <span class="hero-eyebrow">Design System Audit</span>
+    <h1>dacoit<em>.</em>design<br>Visual Language</h1>
+    <p>Complete design system extracted from www.dacoit.design — every token, component, interaction pattern, and accessibility note, all from real values.</p>
+    <div class="hero-meta">
+      <div class="hero-stat"><strong>11</strong><span>Color tokens</span></div>
+      <div class="hero-stat"><strong>9</strong><span>Type styles</span></div>
+      <div class="hero-stat"><strong>3</strong><span>Breakpoints</span></div>
+      <div class="hero-stat"><strong>Mona</strong><span>Primary font</span></div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<section>
+  <span class="section-eyebrow">01 — Foundations</span>
+  <h2 class="section-heading">Color Palette</h2>
+  <p class="section-sub">All color values extracted from the live stylesheet. Contrast ratios per WCAG 2.1.</p>
+  <div class="palette-grid"><div class="swatch">
+  <div class="swatch-fill" style="background:#333333;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">ink-deepest</p>
+    <p class="swatch-hex">#333333</p>
+    <p class="swatch-role">Dominant — text</p>
+    <span class="swatch-contrast contrast-pass">12.63:1 on white · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#f0f0f0;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">canvas-soft</p>
+    <p class="swatch-hex">#f0f0f0</p>
+    <p class="swatch-role">Dominant — background, text</p>
+    <span class="swatch-contrast contrast-pass">18.43:1 on black · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#000000;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">black</p>
+    <p class="swatch-hex">#000000</p>
+    <p class="swatch-role">Supporting — text, background</p>
+    <span class="swatch-contrast contrast-pass">21.00:1 on white · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#c8895e;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">accent</p>
+    <p class="swatch-hex">#c8895e</p>
+    <p class="swatch-role">Supporting — background</p>
+    <span class="swatch-contrast contrast-pass">7.20:1 on black · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#ffffff;border-bottom:1px solid #e8e8e8;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">white</p>
+    <p class="swatch-hex">#ffffff</p>
+    <p class="swatch-role">Accent — background, text</p>
+    <span class="swatch-contrast contrast-pass">21.00:1 on black · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#1b1a16;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">ink-deepest-2</p>
+    <p class="swatch-hex">#1b1a16</p>
+    <p class="swatch-role">Accent — text</p>
+    <span class="swatch-contrast contrast-pass">17.41:1 on white · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#0f0f0f;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">ink-deepest-3</p>
+    <p class="swatch-hex">#0f0f0f</p>
+    <p class="swatch-role">Accent — background</p>
+    <span class="swatch-contrast contrast-pass">19.17:1 on white · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#de5531;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">primary</p>
+    <p class="swatch-hex">#de5531</p>
+    <p class="swatch-role">Accent — text</p>
+    <span class="swatch-contrast contrast-pass">5.45:1 on black · AA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#0000ee;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">link</p>
+    <p class="swatch-hex">#0000ee</p>
+    <p class="swatch-role">Accent — text</p>
+    <span class="swatch-contrast contrast-pass">9.40:1 on white · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#1d1d1d;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">ink-deepest-4</p>
+    <p class="swatch-hex">#1d1d1d</p>
+    <p class="swatch-role">Accent — background</p>
+    <span class="swatch-contrast contrast-pass">16.86:1 on white · AAA ✓</span>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#8d8d8d;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">text-secondary</p>
+    <p class="swatch-hex">#8d8d8d</p>
+    <p class="swatch-role">Accent — text</p>
+    <span class="swatch-contrast contrast-pass">6.33:1 on black · AA ✓</span>
+  </div>
+</div></div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">02 — Foundations</span>
+  <h2 class="section-heading">Typography</h2>
+  <p class="section-sub">Single font family: <strong>Mona Sans</strong> — used across all roles.</p>
+  <table class="type-table">
+    <thead><tr><th>Role</th><th>Specs</th><th>Sample</th><th>Used on</th></tr></thead>
+    <tbody><tr>
+  <td><span class="type-role-badge">Body</span></td>
+  <td><div class="type-meta">Mona Sans<br>16px / 400<br>lh 1.25</div></td>
+  <td><div style="font-size:16px;font-weight:400;line-height:1.25;color:#333333;">The quick brown fox jumps over the lazy dog</div></td>
+  <td><div class="type-meta">BODY element · 16 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Body</span></td>
+  <td><div class="type-meta">Mona Sans<br>16px / 400<br>lh 1.25</div></td>
+  <td><div style="font-size:16px;font-weight:400;line-height:1.25;color:#f0f0f0;">The quick brown fox jumps over the lazy dog</div></td>
+  <td><div class="type-meta">DIV element · 6 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Thin Display</span></td>
+  <td><div class="type-meta">Mona Sans<br>28px / 100<br>lh 1.14</div></td>
+  <td><div style="font-size:28px;font-weight:100;line-height:1.14;color:#de5531;">The quick brown fox jumps over the lazy dog</div></td>
+  <td><div class="type-meta">DIV element · 5 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Heading</span></td>
+  <td><div class="type-meta">Mona Sans<br>28px / 700<br>lh 1.14</div></td>
+  <td><div style="font-size:28px;font-weight:700;line-height:1.14;color:#de5531;">The quick brown fox jumps over</div></td>
+  <td><div class="type-meta">STRONG element · 5 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Link</span></td>
+  <td><div class="type-meta">Mona Sans<br>16px / 400<br>lh 1.25</div></td>
+  <td><div style="font-size:16px;font-weight:400;line-height:1.25;color:#0000ee;">Read more →</div></td>
+  <td><div class="type-meta">A element · 4 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Micro</span></td>
+  <td><div class="type-meta">Mona Sans<br>12px / 700<br>lh 1.67</div></td>
+  <td><div style="font-size:12px;font-weight:700;line-height:1.67;color:#8d8d8d;">LABEL · TAG</div></td>
+  <td><div class="type-meta">DIV element · 3 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Body</span></td>
+  <td><div class="type-meta">Mona Sans<br>16px / 300<br>lh 1.25</div></td>
+  <td><div style="font-size:16px;font-weight:300;line-height:1.25;color:#ffffff;">The quick brown fox jumps over the lazy dog</div></td>
+  <td><div class="type-meta">DIV element · 2 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Micro</span></td>
+  <td><div class="type-meta">Mona Sans<br>12px / 600<br>lh 1.67</div></td>
+  <td><div style="font-size:12px;font-weight:600;line-height:1.67;color:#8d8d8d;">LABEL · TAG</div></td>
+  <td><div class="type-meta">A element · 2 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Body</span></td>
+  <td><div class="type-meta">Mona Sans<br>16px / 400</div></td>
+  <td><div style="font-size:16px;font-weight:400;color:#000000;">The quick brown fox jumps over the lazy dog</div></td>
+  <td><div class="type-meta">HTML element · 1 uses</div></td>
+</tr>
+<tr>
+  <td><span class="type-role-badge">Body</span></td>
+  <td><div class="type-meta">Mona Sans<br>24px / 400<br>lh 0.83</div></td>
+  <td><div style="font-size:24px;font-weight:400;line-height:0.83;color:#333333;">The quick brown fox jumps over the lazy dog</div></td>
+  <td><div class="type-meta">DIV element · 1 uses</div></td>
+</tr></tbody>
+  </table>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">03 — Components</span>
+  <h2 class="section-heading">Navigation</h2>
+  <p class="section-sub">Representative nav demo styled with extracted tokens — background and text colors from scraped surfaces, font from scraped typography.</p>
+
+  <div style="margin-bottom:20px;">
+    <div class="demo-label">nav · demo using extracted colors &amp; font</div>
+    <div class="nav-demo">
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div class="nav-brand-dot">D</div>
+        <span style="font-size:14px;font-weight:700;color:#ffffff;">dacoit.design</span>
+      </div>
+      <div class="nav-demo-links">
+        <span class="active">Home</span><span>About</span><span>Works</span><span>Contact</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="demo-card">
+      <span class="demo-label">Extracted nav tokens</span>
+      <table style="width:100%;font-size:13px;border-collapse:collapse;">
+        <tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#8d8d8d;">Background</td><td style="padding:8px 0;font-family:monospace;font-weight:600;">#000000</td></tr><tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#8d8d8d;">Text color</td><td style="padding:8px 0;font-family:monospace;font-weight:600;">#ffffff</td></tr><tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#8d8d8d;">Font family</td><td style="padding:8px 0;font-family:monospace;font-weight:600;">Mona Sans</td></tr>
+      </table>
+      <p class="demo-note">Layout values (height, padding, link states) are demo styling — not extracted from the site.</p>
+    </div>
+  </div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">04 — Components</span>
+  <h2 class="section-heading">Button Variants</h2>
+  <p class="section-sub">Color and radius tokens extracted from the scrape; secondary/ghost/disabled variants are representative demos built from those tokens. Border-radius: <code>2800px</code> · fill type: <code>solid</code> · padding density: <code>normal</code>.</p>
+  <div class="grid-2">
+    <div class="demo-card">
+      <span class="demo-label">btn-primary · filled CTA</span>
+      <button class="btn-site-primary">Get Started</button>
+      <p class="demo-note">bg #de5531 · color #ffffff · radius: 2800px</p>
+    </div>
+    <div class="demo-card">
+      <span class="demo-label">btn-secondary · outlined demo</span>
+      <button class="btn-site-secondary">Learn More</button>
+      <p class="demo-note">Demo variant — outlined treatment of the extracted primary color #de5531.</p>
+    </div>
+    <div class="demo-card">
+      <span class="demo-label">btn-ghost · text-only demo</span>
+      <button class="btn-site-ghost">View All</button>
+      <p class="demo-note">Demo variant — text-only treatment of the extracted primary color.</p>
+    </div>
+    <div class="demo-card">
+      <span class="demo-label">btn-disabled · demo state</span>
+      <button style="background:#cccccc;color:#888888;border:none;border-radius:2800px;height:44px;padding:0 24px;font-size:14px;font-weight:600;cursor:not-allowed;opacity:0.5;font-family:inherit;">Unavailable</button>
+      <p class="demo-note">Generic disabled-state demo — not extracted from the site.</p>
+    </div>
+  </div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">05 — Components</span>
+  <h2 class="section-heading">Cards &amp; Surfaces</h2>
+  <p class="section-sub">Flat design system — no box-shadows. Depth is communicated through background contrast and borders.</p>
+  <div class="grid-3"><div class="surface-card" style="background:#ffffff;color:#000000;border:1px solid rgba(0,0,0,0.09);">
+  <h4 style="color:#000000;">section surface</h4>
+  <p>bg #ffffff · text #000000</p>
+</div>
+<div class="surface-card" style="background:#f0f0f0;color:#333333;border:1px solid rgba(0,0,0,0.09);">
+  <h4 style="color:#333333;">page canvas</h4>
+  <p>bg #f0f0f0 · text #333333</p>
+</div>
+<div class="surface-card" style="background:#c8895e;color:#333333;border:none;">
+  <h4 style="color:#333333;">card surface</h4>
+  <p>bg #c8895e · text #333333</p>
+</div>
+<div class="surface-card" style="background:#c8895e;color:#1b1a16;border:none;">
+  <h4 style="color:#1b1a16;">section surface</h4>
+  <p>bg #c8895e · text #1b1a16</p>
+</div>
+<div class="surface-card" style="background:#000000;color:#ffffff;border:none;">
+  <h4 style="color:#ffffff;">card surface</h4>
+  <p>bg #000000 · text #333333</p>
+</div></div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">06 — Components</span>
+  <h2 class="section-heading">Form Elements</h2>
+  <p class="section-sub">Representative form patterns styled with extracted color and radius tokens. Input border-radius: not detected in scrape.</p>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:32px;" class="form-wrap">
+    <div>
+      <div class="demo-label" style="margin-bottom:20px;">Contact form — site-styled demo</div>
+      <div class="contact-demo" style="background:#000000;color:#ffffff;">
+        <h3>dacoit.design<br>Get in Touch</h3>
+        <p>hello@dacoit.design</p>
+        <div class="form-field">
+          <label>Name</label>
+          <input type="text" placeholder="Your name">
+        </div>
+        <div class="form-field">
+          <label>Email Address</label>
+          <input type="email" placeholder="you@example.com">
+        </div>
+        <div class="form-field">
+          <label>Message</label>
+          <textarea placeholder="Your message…"></textarea>
+        </div>
+        <button style="width:100%;background:#de5531;color:#ffffff;border:none;border-radius:2800px;height:48px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;">Send Message</button>
+      </div>
+    </div>
+    <div>
+      <div class="demo-label" style="margin-bottom:20px;">Input states</div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="demo-card">
+          <span class="demo-label">input · default</span>
+          <input class="ex-input" placeholder="Enter text…">
+          <p class="demo-note">radius: not detected · demo border/background styling</p>
+        </div>
+        <div class="demo-card">
+          <span class="demo-label">input · focus state demo</span>
+          <input class="ex-input" style="border-color:#de5531;outline:none;" value="Focused input">
+          <p class="demo-note">Demo focus treatment using extracted primary color #de5531.</p>
+        </div>
+        <div class="demo-card">
+          <span class="demo-label">select · dropdown</span>
+          <select class="ex-input" style="height:44px;cursor:pointer;">
+            <option>Choose an option</option>
+            <option>Option A</option>
+            <option>Option B</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">07 — Foundations</span>
+  <h2 class="section-heading">Spacing Scale</h2>
+  <p class="section-sub">Spacing values observed in the live layout. Values extracted from stylesheet padding, margin, and gap declarations.</p>
+  <div class="spacing-row"><div class="spacing-item">
+  <div class="spacing-bar" style="width:4px;"></div>
+  <div class="spacing-label">4px<br>xs</div>
+</div>
+<div class="spacing-item">
+  <div class="spacing-bar" style="width:18px;"></div>
+  <div class="spacing-label">18px<br>lg</div>
+</div>
+<div class="spacing-item">
+  <div class="spacing-bar" style="width:24px;"></div>
+  <div class="spacing-label">24px<br>lg-2</div>
+</div>
+<div class="spacing-item">
+  <div class="spacing-bar" style="width:28px;"></div>
+  <div class="spacing-label">28px<br>xl</div>
+</div>
+<div class="spacing-item">
+  <div class="spacing-bar" style="width:112px;"></div>
+  <div class="spacing-label">112px<br>section</div>
+</div></div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">08 — Foundations</span>
+  <h2 class="section-heading">Border Radius</h2>
+  <p class="section-sub">Corner radius tokens observed across components. All values extracted from live stylesheet.</p>
+  <div class="radius-row"><div class="radius-item">
+  <div class="radius-box" style="border-radius:12px;">
+    <span style="font-size:10px;font-family:monospace;color:#8d8d8d;">12px</span>
+  </div>
+  <div class="radius-label">md<br>12px</div>
+</div>
+<div class="radius-item">
+  <div class="radius-box" style="border-radius:2800px;">
+    <span style="font-size:10px;font-family:monospace;color:#8d8d8d;">2800px</span>
+  </div>
+  <div class="radius-label">full<br>2800px</div>
+</div></div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">09 — Foundations</span>
+  <h2 class="section-heading">Elevation &amp; Depth</h2>
+  <p class="section-sub">Fully flat design — zero box-shadow usage. Depth communicated through background-color contrast and 1px borders.</p>
+  <div class="elevation-grid"><div class="elev-card" style="border:none;background:#f0f0f0;"><strong style="color:#000000;">Level 0 — Page Canvas</strong><p style="margin:8px 0 0;">bg #f0f0f0 — the outermost layer. Everything sits on top of this.</p></div>
+<div class="elev-card" style="border:1px solid rgba(0,0,0,0.09);"><strong style="color:#000000;">Level 1 — Card Surface</strong><p style="margin:8px 0 0;">bg #ffffff with 1px border. No shadow — white lift creates elevation via contrast.</p></div>
+<div class="elev-card" style="background:#000000;color:#ffffff;border:none;"><strong style="color:#ffffff;">Dark Section</strong><p style="margin:8px 0 0;opacity:0.65;">bg #000000 — depth through color contrast, no shadows.</p></div></div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">10 — Interactions</span>
+  <h2 class="section-heading">Motion</h2>
+  <p class="section-sub">Transition and animation values extracted from the scraped stylesheets, with real occurrence counts.</p>
+  <div class="grid-2" style="margin-bottom:32px;">
+    <div class="demo-card">
+      <span class="demo-label">hover demo · using extracted tokens</span>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+        <button class="btn-site-primary" style="transition:opacity 0.1s linear;">Hover me</button>
+        <button class="btn-site-secondary" style="transition:background 0.1s linear,color 0.1s linear;">Hover me</button>
+      </div>
+      <p class="demo-note">Demo transitions use the fastest extracted duration (0.1s linear).</p>
+    </div>
+  </div>
+  <div class="motion-row">
+    <div class="demo-label">Motion tokens (extracted)</div>
+    <table>
+      <thead><tr><th>Token</th><th>Value</th><th>Occurrences</th></tr></thead>
+      <tbody><tr><td>duration-fast</td><td>0.1s</td><td>2× in stylesheet</td></tr>
+<tr><td>duration-base</td><td>0.2s</td><td>4× in stylesheet</td></tr>
+<tr><td>duration-slow</td><td>0.3s</td><td>1× in stylesheet</td></tr>
+<tr><td>duration-slower</td><td>0.8s</td><td>1× in stylesheet</td></tr>
+<tr><td>easing</td><td>linear</td><td>1× in stylesheet</td></tr></tbody>
+    </table>
+  </div>
+</section>
+<hr class="divider">
+<section>
+  <span class="section-eyebrow">11 — Responsive</span>
+  <h2 class="section-heading">Responsive Behavior</h2>
+  <p class="section-sub">Breakpoint boundaries detected in the scraped stylesheet media queries, with real rule counts.</p>
+  <table class="responsive-table">
+    <thead><tr><th>Breakpoint</th><th>Boundary</th><th>Usage</th></tr></thead>
+    <tbody><tr><td>Mobile</td><td>480px</td><td>5 @media rules</td></tr>
+<tr><td>Tablet</td><td>768px</td><td>6 @media rules</td></tr>
+<tr><td>Desktop</td><td>992px</td><td>4 @media rules</td></tr></tbody>
+  </table>
+  <div class="device-ladder"><div class="device-box" style="width:147px;height:97px;">
+  <span style="font-size:9px;text-align:center;color:#8d8d8d;">480px</span>
+</div>
+<div class="device-box" style="width:199px;height:113px;">
+  <span style="font-size:9px;text-align:center;color:#8d8d8d;">768px</span>
+</div>
+<div class="device-box" style="width:240px;height:125px;">
+  <span style="font-size:9px;text-align:center;color:#8d8d8d;">992px</span>
+</div></div>
+  <p style="color:#8d8d8d;margin-top:24px;font-size:13px;">
+    Extracted from <strong style="color:#000000;">https://www.dacoit.design/</strong> stylesheets.
+  </p>
+</section>
+
+<footer class="footer">
+  <span>Design system analysis of <a href="https://www.dacoit.design/" style="color:#de5531;text-decoration:none;font-weight:600;">www.dacoit.design</a> — all values extracted from live site</span>
+  <span>Font: Mona Sans · Generated by getdesign.md</span>
+</footer>
+
+<style>
+@media(max-width:900px){.form-wrap{grid-template-columns:1fr !important;}}
+</style>
+</body>
+</html>

@@ -72,10 +72,10 @@ export async function queryWithKimiBridge(options: KimiBridgeOptions): Promise<s
 export function getKimiOnlyConfig(): StyleMdRuntimeConfig {
   return {
     provider: "kimi",
-    model: "kimi-k2-thinking",
+    model: "kimi-k2.5",
     env: {
       MOONSHOT_API_KEY: process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || "",
     },
-    queryModel: "kimi-k2-thinking",
+    queryModel: "kimi-k2.5",
   };
 }

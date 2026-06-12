@@ -148,7 +148,7 @@ function sleep(ms: number): Promise<void> {
 export class KimiClient {
   private apiKey: string;
   private baseURL = "https://api.moonshot.ai/v1";
-  private model = "kimi-k2-thinking";
+  private model = "kimi-k2.5";
   private maxApiRetries = 5;
 
   constructor(apiKey?: string) {
@@ -541,7 +541,7 @@ export class KimiClient {
         { role: "system", content: systemPrompt },
         ...messages,
       ],
-      temperature: 0.7,
+      temperature: 1,
       top_p: 0.95,
       ...(tools.length > 0 && { tools }),
     };

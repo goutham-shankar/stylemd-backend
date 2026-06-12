@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Design System Analysis of dacoit.design</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Mona sans', sans-serif,Arial,sans-serif;background:#ffffff;color:#21242e;-webkit-font-smoothing:antialiased;}
+  .nav{padding:0 48px;height:64px;background:#ffffff;border-bottom:1px solid #d0d0d0;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
+  .nav-brand{font-weight:700;font-size:16px;}
+  .nav-cta{background:#000000;color:#ffffff;border:2px solid #000000;border-radius:2800px;padding:8px 22px;font-weight:600;font-size:15px;cursor:pointer;}
+  .hero{padding:96px 48px;background:#f0f0f0;max-width:1440px;margin:0 auto;}
+  .hero h1{font-family:'Mona sans', sans-serif,Arial,sans-serif;font-size:64px;font-weight:700;line-height:1.05;color:#333333;margin:0 0 24px;}
+  .hero p{font-size:18px;color:#333333;max-width:720px;margin:0 0 36px;line-height:1.5;opacity:0.85;}
+  .hero-actions{display:flex;gap:12px;flex-wrap:wrap;}
+  .btn-primary{background:#000000;color:#ffffff;border:2px solid #000000;border-radius:2800px;height:48px;padding:0 27px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;}
+  .btn-secondary{background:#ffffff;color:#000000;border:2px solid #000000;border-radius:2800px;height:48px;padding:0 27px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;}
+  section{padding:80px 48px;max-width:1440px;margin:0 auto;}
+  .section-eyebrow{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#60619c;margin-bottom:8px;display:block;}
+  .section-heading{font-family:'Mona sans', sans-serif,Arial,sans-serif;font-size:36px;font-weight:700;letter-spacing:-0.5px;margin:0 0 32px;}
+  .palette-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;}
+  .swatch{border:1px solid #e0e0e0;border-radius:8px;overflow:hidden;}
+  .swatch-fill{height:90px;}
+  .swatch-meta{padding:12px;}
+  .swatch-name{font-weight:600;font-size:14px;margin:0 0 2px;}
+  .swatch-hex{font-family:monospace;font-size:12px;color:#60619c;margin:0 0 6px;}
+  .swatch-role{font-size:12px;color:#60619c;margin:0;line-height:1.4;}
+  .type-row{display:grid;grid-template-columns:240px 1fr;gap:24px;padding:18px 0;border-top:1px solid #e0e0e0;align-items:baseline;}
+  .type-meta{font-family:monospace;font-size:11px;color:#60619c;line-height:1.6;}
+  .button-grid,.card-grid,.form-grid,.elevation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px;}
+  .demo-card{border:1px solid #e0e0e0;border-radius:12px;padding:24px;background:#ffffff;}
+  .label{font-size:12px;color:#60619c;display:block;margin-bottom:12px;font-weight:600;}
+  .feature-card{border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:24px;}
+  .feature-card h4{margin:0 0 8px;font-size:17px;font-weight:600;}
+  .feature-card p{margin:0;font-size:13px;line-height:1.5;opacity:0.75;}
+  .ex-input-demo{width:100%;background:#ffffff;border:1px solid #ccc;color:#21242e;padding:10px 14px;font-family:inherit;font-size:15px;border-radius:4px;}
+  .spacing-row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;}
+  .spacing-box{background:#000000;height:40px;border-radius:4px;}
+  .spacing-label{font-family:monospace;font-size:11px;color:#60619c;margin-top:6px;text-align:center;}
+  .radius-row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;}
+  .radius-box{width:90px;height:90px;background:#ffffff;border:2px solid #000000;display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:11px;color:#60619c;}
+  .radius-label{font-family:monospace;font-size:11px;color:#60619c;margin-top:6px;text-align:center;}
+  .elev-card{background:#ffffff;border:1px solid #e0e0e0;border-radius:12px;padding:24px;font-size:13px;color:#60619c;margin-bottom:4px;}
+  .responsive-table{width:100%;border-collapse:collapse;font-size:14px;}
+  .responsive-table th,.responsive-table td{text-align:left;padding:12px 16px;border-bottom:1px solid #e0e0e0;}
+  .responsive-table th{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#60619c;background:#f9f9f9;}
+  .device-ladder{display:flex;gap:12px;align-items:flex-end;}
+  .device-box{background:#ffffff;border:1px solid #e0e0e0;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#60619c;}
+  .footer{padding:32px 48px;border-top:1px solid #e0e0e0;font-size:13px;color:#60619c;text-align:center;}
+  @media(max-width:768px){section{padding:48px 20px;}.type-row{grid-template-columns:1fr;gap:8px;}.section-heading{font-size:26px;}.hero{padding:48px 20px;}.hero h1{font-size:36px;}}
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <span class="nav-brand">dacoit.design</span>
+  <button class="nav-cta">Design System</button>
+</nav>
+
+<div class="hero">
+  <h1>Design System Analysis</h1>
+  <p>Visual language extracted from <strong>www.dacoit.design</strong> — colors, typography, components, spacing, and interaction patterns that define the brand experience.</p>
+  <div class="hero-actions">
+    <button class="btn-primary">View Components</button>
+    <button class="btn-secondary">Color Tokens</button>
+  </div>
+</div>
+
+<section>
+  <span class="section-eyebrow">01 — Foundations</span>
+  <h2 class="section-heading">Color Palette</h2>
+  <div class="palette-grid"><div class="swatch">
+  <div class="swatch-fill" style="background:#333333;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">text-0</p>
+    <p class="swatch-hex">#333333</p>
+    <p class="swatch-role">Dominant — text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#f0f0f0;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">canvas-soft</p>
+    <p class="swatch-hex">#f0f0f0</p>
+    <p class="swatch-role">Dominant — background, text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#000000;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">primary</p>
+    <p class="swatch-hex">#000000</p>
+    <p class="swatch-role">Supporting — text, background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#c8895e;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">surface-3</p>
+    <p class="swatch-hex">#c8895e</p>
+    <p class="swatch-role">Supporting — background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#ffffff;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">surface</p>
+    <p class="swatch-hex">#ffffff</p>
+    <p class="swatch-role">Supporting — background, text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#1b1a16;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">text-5</p>
+    <p class="swatch-hex">#1b1a16</p>
+    <p class="swatch-role">Accent — text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#0f0f0f;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">accent-6</p>
+    <p class="swatch-hex">#0f0f0f</p>
+    <p class="swatch-role">Accent — background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#de5531;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">text-7</p>
+    <p class="swatch-hex">#de5531</p>
+    <p class="swatch-role">Accent — text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#0000ee;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">link</p>
+    <p class="swatch-hex">#0000ee</p>
+    <p class="swatch-role">Accent — text</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#1d1d1d;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">accent-9</p>
+    <p class="swatch-hex">#1d1d1d</p>
+    <p class="swatch-role">Accent — background</p>
+  </div>
+</div>
+<div class="swatch">
+  <div class="swatch-fill" style="background:#8d8d8d;"></div>
+  <div class="swatch-meta">
+    <p class="swatch-name">text-10</p>
+    <p class="swatch-hex">#8d8d8d</p>
+    <p class="swatch-role">Accent — text</p>
+  </div>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">02 — Foundations</span>
+  <h2 class="section-heading">Typography</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;max-width:720px;">
+    Body: Mona sans · Heading: Mona sans
+  </p>
+  <div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Mona sans · 16px / 400<br>
+    lh 1.25 · ls 0<br>
+    <span style="color:#888;">BODY element · 16 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:400;line-height:20px;color:#333333;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Mona sans · 16px / 400<br>
+    lh 1.25 · ls 0<br>
+    <span style="color:#888;">DIV element · 6 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:400;line-height:20px;color:#f0f0f0;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Mona sans · 28px / 100<br>
+    lh 1.14 · ls 0<br>
+    <span style="color:#888;">DIV element · 5 uses</span>
+  </div>
+  <div style="font-size:28px;font-weight:100;line-height:32px;color:#de5531;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    display<br>
+    Mona sans · 28px / 700<br>
+    lh 1.14 · ls 0<br>
+    <span style="color:#888;">STRONG element · 5 uses</span>
+  </div>
+  <div style="font-size:28px;font-weight:700;line-height:32px;color:#de5531;">The quick brown fox</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    link<br>
+    Mona sans · 16px / 400<br>
+    lh 1.25 · ls 0<br>
+    <span style="color:#888;">A element · 4 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:400;line-height:20px;color:#0000ee;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    micro<br>
+    Mona sans · 12px / 700<br>
+    lh 1.67 · ls 0<br>
+    <span style="color:#888;">DIV element · 3 uses</span>
+  </div>
+  <div style="font-size:12px;font-weight:700;line-height:20px;color:#8d8d8d;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    body<br>
+    Mona sans · 16px / 300<br>
+    lh 1.25 · ls 0<br>
+    <span style="color:#888;">DIV element · 2 uses</span>
+  </div>
+  <div style="font-size:16px;font-weight:300;line-height:20px;color:#ffffff;">The quick brown fox jumps over the lazy dog</div>
+</div>
+<div class="type-row">
+  <div class="type-meta">
+    micro<br>
+    Mona sans · 12px / 600<br>
+    lh 1.67 · ls 0<br>
+    <span style="color:#888;">A element · 2 uses</span>
+  </div>
+  <div style="font-size:12px;font-weight:600;line-height:20px;color:#8d8d8d;">The quick brown fox jumps over the lazy dog</div>
+</div>
+</section>
+<section>
+  <span class="section-eyebrow">03 — Components</span>
+  <h2 class="section-heading">Button Variants</h2>
+  <div class="button-grid">
+    <div class="demo-card">
+      <span class="label">button-primary · filled CTA</span>
+      <button style="background:#000000;color:#ffffff;border:2px solid #000000;border-radius:2800px;height:44px;padding:0 24px;font-size:15px;font-weight:600;cursor:pointer;">
+        Get Started
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Primary brand fill — the main call-to-action.</p>
+    </div>
+    <div class="demo-card">
+      <span class="label">button-secondary · outlined</span>
+      <button style="background:#ffffff;color:#000000;border:2px solid #000000;border-radius:2800px;height:44px;padding:0 24px;font-size:15px;font-weight:600;cursor:pointer;">
+        Learn More
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Outlined secondary — lower emphasis action.</p>
+    </div>
+    <div class="demo-card">
+      <span class="label">button-ghost · text only</span>
+      <button style="background:transparent;color:#000000;border:none;border-radius:2800px;height:44px;padding:0 24px;font-size:15px;font-weight:500;cursor:pointer;text-decoration:underline;">
+        View All
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Ghost / text button — minimal hierarchy.</p>
+    </div>
+    <div class="demo-card">
+      <span class="label">button-disabled · inactive state</span>
+      <button style="background:#cccccc;color:#888888;border:2px solid #cccccc;border-radius:2800px;height:44px;padding:0 24px;font-size:15px;font-weight:600;cursor:not-allowed;opacity:0.6;">
+        Unavailable
+      </button>
+      <p style="font-size:12px;color:#60619c;margin:12px 0 0;">Disabled state — reduced opacity, no interaction.</p>
+    </div>
+  </div>
+</section>
+<section>
+  <span class="section-eyebrow">04 — Components</span>
+  <h2 class="section-heading">Cards &amp; Surfaces</h2>
+  <div class="card-grid"><div class="feature-card" style="background:#ffffff;color:#000000;">
+  <h4>section surface</h4>
+  <p style="color:#000000;opacity:0.7;">Background: #ffffff · Text: #000000</p>
+</div>
+<div class="feature-card" style="background:#f0f0f0;color:#333333;">
+  <h4>page canvas</h4>
+  <p style="color:#333333;opacity:0.7;">Background: #f0f0f0 · Text: #333333</p>
+</div>
+<div class="feature-card" style="background:#c8895e;color:#333333;">
+  <h4>card surface</h4>
+  <p style="color:#333333;opacity:0.7;">Background: #c8895e · Text: #333333</p>
+</div>
+<div class="feature-card" style="background:#c8895e;color:#1b1a16;">
+  <h4>section surface</h4>
+  <p style="color:#1b1a16;opacity:0.7;">Background: #c8895e · Text: #1b1a16</p>
+</div>
+<div class="feature-card" style="background:#000000;color:#333333;">
+  <h4>card surface</h4>
+  <p style="color:#333333;opacity:0.7;">Background: #000000 · Text: #333333</p>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">05 — Components</span>
+  <h2 class="section-heading">Form Elements</h2>
+  <div class="form-grid">
+    <div class="demo-card">
+      <span class="label">text-input · default</span>
+      <input class="ex-input-demo" placeholder="Enter text…" style="border-radius:4px;">
+    </div>
+    <div class="demo-card">
+      <span class="label">search-field + submit</span>
+      <div style="display:flex;gap:6px;">
+        <input class="ex-input-demo" placeholder="Search…" style="border-radius:4px;">
+        <button style="background:#000000;color:#ffffff;border:none;border-radius:4px;padding:0 16px;font-size:13px;cursor:pointer;">Go</button>
+      </div>
+    </div>
+    <div class="demo-card">
+      <span class="label">select-dropdown</span>
+      <select style="width:100%;background:#fff;border:1px solid #ccc;color:#333;padding:10px 12px;font-size:14px;border-radius:4px;height:44px;">
+        <option>Choose an option</option>
+        <option>Option A</option>
+        <option>Option B</option>
+      </select>
+    </div>
+    <div class="demo-card">
+      <span class="label">textarea · multi-line</span>
+      <textarea style="width:100%;background:#fff;border:1px solid #ccc;color:#333;padding:10px 12px;font-size:14px;border-radius:4px;resize:vertical;min-height:72px;font-family:inherit;" placeholder="Your message…"></textarea>
+    </div>
+    <div class="demo-card">
+      <span class="label">checkbox + label</span>
+      <div style="display:flex;align-items:center;gap:10px;font-size:14px;">
+        <input type="checkbox" style="width:18px;height:18px;accent-color:#000000;">
+        <span>I agree to the terms</span>
+      </div>
+    </div>
+    <div class="demo-card">
+      <span class="label">radio group</span>
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:14px;">
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="demo" style="accent-color:#000000;"> Option One</label>
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="demo" style="accent-color:#000000;"> Option Two</label>
+      </div>
+    </div>
+  </div>
+</section>
+<section>
+  <span class="section-eyebrow">06 — Foundations</span>
+  <h2 class="section-heading">Spacing Scale</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;">Spacing values observed in the layout.</p>
+  <div class="spacing-row"><div>
+  <div class="spacing-box" style="width:8px;"></div>
+  <div class="spacing-label">xs<br>4px</div>
+</div>
+<div>
+  <div class="spacing-box" style="width:18px;"></div>
+  <div class="spacing-label">lg<br>18px</div>
+</div>
+<div>
+  <div class="spacing-box" style="width:24px;"></div>
+  <div class="spacing-label">lg<br>24px</div>
+</div>
+<div>
+  <div class="spacing-box" style="width:28px;"></div>
+  <div class="spacing-label">xl<br>28px</div>
+</div>
+<div>
+  <div class="spacing-box" style="width:112px;"></div>
+  <div class="spacing-label">section<br>112px</div>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">07 — Foundations</span>
+  <h2 class="section-heading">Border Radius</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;">Corner radius tokens observed across components.</p>
+  <div class="radius-row"><div>
+  <div class="radius-box" style="border-radius:0px;">0px</div>
+  <div class="radius-label">none</div>
+</div>
+<div>
+  <div class="radius-box" style="border-radius:12px;">12px</div>
+  <div class="radius-label">md</div>
+</div>
+<div>
+  <div class="radius-box" style="border-radius:2800px;">2800px</div>
+  <div class="radius-label">full</div>
+</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">08 — Foundations</span>
+  <h2 class="section-heading">Elevation &amp; Depth</h2>
+  <p style="color:#60619c;margin:-16px 0 28px;">Flat design — elevation is expressed through color contrast and borders, not shadows.</p>
+  <div class="elevation-grid"><div class="elev-card elev-1">Flat / borderless — this site uses no box-shadow elevation. Depth is created through background-color contrast and solid borders.</div>
+<div class="elev-card" style="border:1px solid #d0d0d0;">Border elevation — 1px solid border distinguishes surfaces. Used for cards, inputs, and containers.</div>
+<div class="elev-card" style="background:#f4f4f4;border:none;">Background elevation — lighter/darker fill communicates nesting, no shadow needed.</div></div>
+</section>
+<section>
+  <span class="section-eyebrow">09 — Responsive</span>
+  <h2 class="section-heading">Responsive Behavior</h2>
+  <table class="responsive-table">
+    <thead><tr><th>Breakpoint</th><th>Min-width</th><th>Key changes</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="device-ladder" style="margin-top:24px;"></div>
+  <p style="color:#60619c;margin-top:24px;font-size:14px;">
+    Breakpoints extracted from <strong style="color:#21242e;">https://www.dacoit.design/</strong> stylesheet media queries.
+    Touch targets follow WCAG 2.1 AA minimum 44×44px.
+  </p>
+</section>
+
+<footer class="footer">Design system analysis of https://www.dacoit.design/</footer>
+</body>
+</html>
