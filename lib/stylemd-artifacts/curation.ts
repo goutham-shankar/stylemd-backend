@@ -21,7 +21,7 @@ import {
   errorToMessage,
   nowIso,
 } from "@/lib/stylemd-artifacts/helpers";
-import { createEmptyKimiTokenUsage } from "@/lib/services/kimiUsage";
+import { createEmptyKimiTokenUsage, type KimiTokenUsage } from "@/lib/services/kimiUsage";
 import type {
   StyleMdArtifactRecord,
   StyleMdComponentEntry,
@@ -40,9 +40,14 @@ function storeTokenUsage(runId: string, queryLabel: string, inputTokens: number,
   tokenUsageMap.set(key, { inputTokens, outputTokens });
 }
 
-function getTokenUsage(runId: string, queryLabel: string): { inputTokens: number; outputTokens: number } {
+function getTokenUsage(runId: string, queryLabel: string): KimiTokenUsage {
   const key = `${runId}::${queryLabel}`;
-  return tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+  const usage = tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.inputTokens + usage.outputTokens,
+  };
 }
 
 type ObservableEventPayload = {

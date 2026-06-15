@@ -449,7 +449,7 @@ export async function runSimplifiedStyleMdPipeline(
       });
 
       registerArtifacts(output.artifacts);
-      aggregateTokenUsage = accumulateKimiTokenUsage(aggregateTokenUsage, output.result.query);
+      // Extract stage is pure DOM analysis — no Kimi tokens to accumulate.
       state = updateRunState(state, {
         metrics: {
           ...state.metrics,

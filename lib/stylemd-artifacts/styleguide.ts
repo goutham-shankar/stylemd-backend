@@ -42,9 +42,10 @@ function storeTokenUsage(runId: string, queryLabel: string, inputTokens: number,
   tokenUsageMap.set(key, { inputTokens, outputTokens });
 }
 
-function getTokenUsage(runId: string, queryLabel: string): { inputTokens: number; outputTokens: number } {
+function getTokenUsage(runId: string, queryLabel: string): { inputTokens: number; outputTokens: number; totalTokens: number } {
   const key = `${runId}::${queryLabel}`;
-  return tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+  const usage = tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+  return { ...usage, totalTokens: usage.inputTokens + usage.outputTokens };
 }
 
 type ObservableEventPayload = {
