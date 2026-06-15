@@ -591,3 +591,358 @@ Tackle in two waves: **(1) schema + worker cleanup + indexes** (one PR), **(2) b
 ---
 
 *Audit complete. Source numbers gathered from live `mongosh` / `redis-cli` / `du` against this project on 2026-06-16.*
+
+---
+
+## 12 — Storage v2 — implementation reference + migration runbook
+
+> **Status:** wave 1 shipped (this PR). Schemas, worker, controller, pipeline writes, and migration tooling all updated to storage v2.
+
+### 12.1 What changed in the codebase
+
+| File | Change |
+|---|---|
+| [lib/queue/r2.ts](lib/queue/r2.ts) | Added `PIPELINE_VERSION`, `WORKER_VERSION`, `STORAGE_VERSION` constants. Added `r2KeyFor(slug, artifact)` and `r2PublicUrl(key)`. `uploadR2()` now returns the key (not URL). |
+| [lib/queue/types.ts](lib/queue/types.ts) | Job result type updated to `{ runId, r2: R2Keys }`. |
+| [backend/src/models/ScrapedData.ts](backend/src/models/ScrapedData.ts) | Slim schema. Drops inline `previewHtml`/`designMd`/`rawHtml`/`images`/`brandAssets`. Adds `r2.*` subdoc, version stamps, `lastScrapedAt`, compound `(status, updatedAt)` index. |
+| [backend/src/models/StyleMdRun.ts](backend/src/models/StyleMdRun.ts) | Slim schema. Drops inline `styleMd`/`screenshot`/`images`/`brandAssets`/full manifests. Adds `summary` subdoc, `r2.*` subdoc, version stamps, compound `(url, createdAt)` index. |
+| [backend/src/worker.ts](backend/src/worker.ts) | Uploads to `websites/{slug}/...`, stores keys in Mongo, deletes `.playground/<runId>/` after success, stamps version fields. |
+| [lib/stylemd-artifacts/simplifiedPipeline.ts](lib/stylemd-artifacts/simplifiedPipeline.ts) | Early `scraped_data` upsert now slim (no `rawHtml`/`images`). Screenshot capture no longer persists to Mongo. |
+| [lib/services/persistStyleMdMongo.ts](lib/services/persistStyleMdMongo.ts) | Slim upsert — emits `summary` from `extractionMetadata`, drops `styleMd`/`images`/`screenshot`/full manifests. |
+| [backend/src/controllers/scrapedData.controller.ts](backend/src/controllers/scrapedData.controller.ts) | Cache-hit 302-redirects to R2 public URL. List endpoint attaches resolved `r2Urls` without mutating stored keys. |
+| [backend/src/app.ts](backend/src/app.ts) | Removed dead `/runs` static mount. |
+| [scripts/migrate-storage-v2.ts](scripts/migrate-storage-v2.ts) | **New.** Backfills R2 + drops legacy Mongo fields. Idempotent + dry-run. |
+| [scripts/apply-indexes.ts](scripts/apply-indexes.ts) | **New.** `syncIndexes()` for both models. |
+| [scripts/cleanup-playground.sh](scripts/cleanup-playground.sh) | **New.** Cron-friendly sweep of orphaned `.playground/` dirs. |
+
+### 12.2 Field mapping reference (v1 → v2)
+
+#### scraped_data
+
+| v1 field | v2 location | Notes |
+|---|---|---|
+| `previewHtml` (inline string) | R2 `websites/{slug}/preview.html` → Mongo `r2.previewHtml` (key) | 0–59 KB → 0 in Mongo |
+| `designMd` (inline string) | R2 `websites/{slug}/design.md` → Mongo `r2.designMd` (key) | |
+| `rawHtml` (inline string) | R2 `websites/{slug}/raw.html` → Mongo `r2.rawHtml` (key) | 49 KB → 0 in Mongo |
+| `images[0]` (base64 data URL) | R2 `websites/{slug}/screenshot.jpg` → Mongo `r2.screenshot` (key) | 50–170 KB → 0 in Mongo |
+| `brandAssets.{logo,favicon,…}` (base64) | R2 `websites/{slug}/assets/{...}` → Mongo `r2.assets.*` (keys) | 0–60 KB → 0 in Mongo |
+| `runServeUrl` | (deleted — legacy local-FS URL) | |
+| `title, description, h1, canonical, contentText` | unchanged (kept inline) | |
+| `url, runId, status, error` | unchanged | + new `slug`, `durationMs`, `lastScrapedAt`, `pipelineVersion`, `workerVersion`, `storageVersion` |
+
+#### stylemd_runs
+
+| v1 field | v2 location | Notes |
+|---|---|---|
+| `styleMd` (inline markdown) | R2 `websites/{slug}/design.md` → Mongo `r2.designMd` (key) | |
+| `screenshot` (base64) | R2 `websites/{slug}/screenshot.jpg` → Mongo `r2.screenshot` (key) | |
+| `images[]` (base64) | (deleted — duplicate of `screenshot`) | |
+| `brandAssets` (base64) | R2 `websites/{slug}/assets/*` → Mongo `r2.assets.*` (keys) | |
+| `extractionMetadata.designTokenManifest` | R2 `websites/{slug}/design_tokens.json` → Mongo `r2.designTokens` (key) | Large Mixed object |
+| `extractionMetadata.semanticStructure` | R2 `websites/{slug}/semantic_structure.json` → Mongo `r2.semanticStructure` (key) | Large Mixed object |
+| `extractionMetadata.{primaryColors, typographyFamilies, sectionCount, confidenceScore, scannedElements, durationMs}` | Flattened into Mongo `summary` + `durationMs` | Tiny, queryable |
+| `designTokens, tokenUsage, costEstimate` | unchanged (kept inline) | Analytics-grade, queryable |
+| Everything else | unchanged | + new `summary`, `r2.*`, version stamps |
+
+### 12.3 Production migration runbook
+
+**Pre-flight (1 minute):**
+
+```bash
+# Confirm Redis is up
+redis-cli ping       # → PONG
+
+# Confirm R2 creds work
+aws s3 ls s3://designprobe/ --endpoint-url "$R2_ENDPOINT" --profile r2-backup
+
+# Take a fresh Mongo backup before migrating
+./scripts/backup.sh   # see §8 — uploads to R2 backups/mongo/
+```
+
+**Step 1 — Dry-run the migration (no writes):**
+
+```bash
+tsx scripts/migrate-storage-v2.ts --dry-run
+```
+
+Expected output:
+```
+storage migration → v2 (DRY RUN)
+bucket=designprobe  pipeline=1.0.0  worker=1.0.0
+
+── migrating scraped_data ──
+  [dry] https://apple.com/ → apple.com keys={…}
+  [dry] https://dacoit.design/ → dacoit.design keys={…}
+  …
+── migrating stylemd_runs ──
+  …
+── summary ──
+scraped_data:  scanned=7   migrated=7   uploaded=15  skipped=0
+stylemd_runs:  scanned=34  migrated=34  uploaded=21  skipped=0
+```
+
+Review the counts. If `migrated == 0` but you have docs, something's off — investigate before going live.
+
+**Step 2 — Live migration:**
+
+```bash
+tsx scripts/migrate-storage-v2.ts
+```
+
+Properties:
+- **Idempotent:** safe to re-run if it crashes
+- **Resumable:** Ctrl-C and re-running picks up where it left off (already-migrated docs are detected via `storageVersion == "v2"` + no legacy fields)
+- **Read-then-write ordered:** uploads to R2 succeed before legacy fields are `$unset`, so a mid-flight crash never loses data
+
+**Step 3 — Apply indexes:**
+
+```bash
+tsx scripts/apply-indexes.ts
+```
+
+Verifies and creates: `url_1`, `runId_1`, `status_1` (compound `status + updatedAt`), `createdAt_1`, `(url + createdAt)`. Drops orphan `slug_1` on `stylemd_runs`.
+
+**Step 4 — Restart services (picks up new schema + code):**
+
+```bash
+pm2 restart stylemd-api stylemd-worker
+```
+
+**Step 5 — Verify:**
+
+```bash
+# A. Cache-hit test — should 302 to R2
+curl -sI http://localhost:3000/api/scraped-data -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://dacoit.design/"}' | head -5
+# Expect: HTTP/1.1 302 Found
+# Location: https://pub-…r2.dev/websites/dacoit.design/preview.html
+
+# B. Fresh scrape test — should create a new run, upload, and clean up
+curl -s http://localhost:3000/api/scraped-data -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://stripe.com/","force":true}'
+# Wait for worker, then check:
+ls -la .playground/stylemd-artifact-runs/   # should be empty (or have only in-flight runs)
+mongosh --quiet --eval 'db.scraped_data.findOne({url:"https://stripe.com/"}, {r2:1, storageVersion:1, durationMs:1})'
+# Expect: storageVersion: "v2", r2.previewHtml: "websites/stripe.com/preview.html", durationMs: <number>
+```
+
+**Step 6 — Storage check:**
+
+```bash
+mongosh --quiet --eval '
+const db = db.getSiblingDB("stylemd");
+["scraped_data", "stylemd_runs"].forEach(c => {
+  const s = db.runCommand({ collStats: c });
+  print(c + ": count=" + s.count + " size=" + (s.size/1024).toFixed(0) + "KB avgObj=" + Math.round(s.avgObjSize/1024) + "KB");
+});
+'
+```
+
+Expected drop: avgObj from 272 KB → ~3 KB (scraped_data), 943 KB → ~15 KB (stylemd_runs).
+
+### 12.4 Rollback plan
+
+If the migration causes issues:
+
+```bash
+# 1. Stop services
+pm2 stop stylemd-api stylemd-worker
+
+# 2. Restore the pre-migration Mongo backup
+aws s3 cp s3://designprobe/backups/mongo/<PRE_MIGRATION_TIMESTAMP>.gz /tmp/restore.gz \
+  --endpoint-url "$R2_ENDPOINT" --profile r2-backup
+mongorestore --uri="$MONGO_URI" --gzip --archive=/tmp/restore.gz --drop
+
+# 3. Revert the code (git revert the storage-v2 PR)
+git revert <commit-sha> && npm run build
+
+# 4. Restart
+pm2 restart stylemd-api stylemd-worker
+```
+
+R2 objects uploaded by the migration are not deleted by rollback — they're harmless and become useful again when you re-apply the migration.
+
+### 12.5 Backward compatibility during cutover
+
+`strict: false` on both schemas means Mongoose still **reads** legacy fields if they exist. So during the migration:
+
+- ✅ A doc that's been migrated → reads `r2.previewHtml`, gets the key, resolves to URL
+- ✅ A doc that hasn't been migrated → has legacy `previewHtml` still inline; cache-check finds no `r2.previewHtml` so it falls through to a cache MISS and re-enqueues a fresh job. The worker writes the v2 shape on completion.
+- ✅ The worker writes v2 unconditionally; new runs are always v2 from the moment this PR ships.
+
+**Net effect:** zero user-facing breakage. Stale-cache misses might cause re-scrapes for un-migrated URLs, which is the trade-off — but you ran the migration first, so this should never happen in practice.
+
+After the migration succeeds and you've verified everything for 24-48 hours, you can tighten the schemas:
+
+```ts
+// in ScrapedData.ts and StyleMdRun.ts:
+{ collection: "...", strict: true }   // ← change back to strict
+```
+
+That's wave 3 (optional). Worth doing before you hit BSON write quirks.
+
+### 12.6 What's NOT in storage v2 (planned for v3)
+
+- **Brand asset uploads** — the worker stubs out `r2.assets.*` but the pipeline doesn't yet extract logo/favicon/og.png from the page. When that lands, the worker will upload to `websites/{slug}/assets/logo.png` etc. Same R2 layout, no schema change.
+- **`latest/<slug>/` alias** — currently we just overwrite `websites/{slug}/preview.html` on re-scrape. If you want versioned snapshots, switch keys to `websites/{slug}/<runId>/...` and add a worker step to copy to `latest/{slug}/`. Schema already supports it.
+- **`dead_jobs` DLQ collection** — failed-job archive from §6 deferred until you have enough failures to care.
+
+### 12.7 Quick sanity checklist after deploy
+
+- [ ] `tsx scripts/migrate-storage-v2.ts --dry-run` reports expected counts
+- [ ] `tsx scripts/migrate-storage-v2.ts` (live) reports 0 errors
+- [ ] `tsx scripts/apply-indexes.ts` lists all expected indexes
+- [ ] `curl -I` on cached URL returns 302 to `https://…r2.dev/websites/…`
+- [ ] Force-scrape a new URL — worker logs "cleaned <runDir>" after success
+- [ ] `du -sh .playground/stylemd-artifact-runs/` is small (only in-flight)
+- [ ] Mongo `db.scraped_data.aggregate([{$group:{_id:null,avg:{$avg:{$bsonSize:"$$ROOT"}}}}])` shows avg doc size < 10 KB
+
+If all 7 pass, storage v2 is live and working.
+
+---
+
+## 13 — Storage v2.1 — asset & artifact cleanup
+
+> **Status:** shipped. Bumps `STORAGE_VERSION` from `v2` to `v2.1`. Removes `raw.html` from default artifacts, adds self-describing `manifest.json`, introduces opt-in `debugMode`.
+
+### 13.1 Headline changes
+
+| Change | Reason |
+|---|---|
+| **`raw.html` dropped from default artifacts** | Re-fetchable on demand from origin URL; storing every page's HTML wastes R2 bandwidth and Mongo schema surface. |
+| **`r2.rawHtml` field removed** from `ScrapedData.r2` + `StyleMdRun.r2` | Nothing reads it; new uploads never write it. |
+| **`debugMode: boolean`** opt-in on the scrape request | When `true`, the worker uploads `raw.html` under `websites/{slug}/debug/raw.html`. Off by default. |
+| **`manifest.json`** generated for every snapshot | Self-describing index of what's in `websites/{slug}/`. Downstream tools read one file instead of guessing filenames. |
+| **Manifest URL NOT stored in Mongo** | Always derivable from `slug` → no schema growth. |
+
+### 13.2 R2 layout (v2.1)
+
+```
+designprobe/
+└── websites/
+     └── {slug}/
+          ├── manifest.json            ← always generated
+          ├── preview.html
+          ├── design.md
+          ├── screenshot.jpg
+          ├── semantic_structure.json
+          ├── design_tokens.json
+          ├── assets/                  ← future (v2.2): logo/favicon/og
+          │     ├── logo.svg
+          │     ├── favicon.ico
+          │     └── og-image.jpg
+          └── debug/                   ← only present when debugMode=true
+                └── raw.html
+```
+
+### 13.3 `manifest.json` shape
+
+```json
+{
+  "domain": "stripe.com",
+  "slug": "stripe.com",
+  "generatedAt": "2026-06-16T12:34:56.789Z",
+  "pipelineVersion": "1.0.0",
+  "workerVersion": "1.0.0",
+  "storageVersion": "v2.1",
+  "artifacts": {
+    "previewHtml": "preview.html",
+    "designMd": "design.md",
+    "screenshot": "screenshot.jpg",
+    "designTokens": "design_tokens.json",
+    "semanticStructure": "semantic_structure.json"
+  },
+  "assets": {
+    "logo": null,
+    "favicon": null,
+    "appleIcon": null,
+    "ogImage": null
+  },
+  "debug": { "rawHtml": "debug/raw.html" }
+}
+```
+
+- Filenames are **relative to `websites/{slug}/`**. Resolve them via `${R2_PUBLIC_BASE}/websites/${slug}/${filename}`.
+- Any field whose artifact wasn't produced (e.g. screenshot capture failed) is `null` — consumers should check before linking.
+- `debug` is only present when the run was invoked with `debugMode: true`.
+
+### 13.4 API change — request body
+
+```http
+POST /api/scraped-data
+Content-Type: application/json
+
+{
+  "url": "https://stripe.com",
+  "provider": "kimi",      // optional, default "kimi"
+  "force": false,          // optional, default false
+  "debugMode": false       // optional, default false (v2.1+)
+}
+```
+
+When `debugMode: true`, the worker uploads `raw.html` to `websites/{slug}/debug/raw.html` and the manifest's `debug.rawHtml` field is set. No other behavior changes.
+
+### 13.5 What changed in code (v2 → v2.1)
+
+| File | Change |
+|---|---|
+| [lib/queue/r2.ts](lib/queue/r2.ts) | `STORAGE_VERSION = "v2.1"`. `R2_ARTIFACT_NAMES` no longer includes `rawHtml`; added `manifest`. New `R2_DEBUG_ARTIFACT_NAMES = { rawHtml: "debug/raw.html" }`. New `buildManifest(...)` helper + `Manifest` type. |
+| [lib/queue/types.ts](lib/queue/types.ts) | `R2Keys.rawHtml` removed. `ScrapeJobData.debugMode?: boolean` added. |
+| [backend/src/models/ScrapedData.ts](backend/src/models/ScrapedData.ts) | `r2.rawHtml` removed from `R2KeysSchema`. |
+| [backend/src/models/StyleMdRun.ts](backend/src/models/StyleMdRun.ts) | `r2.rawHtml` removed from `R2KeysSchema`. |
+| [backend/src/worker.ts](backend/src/worker.ts) | Drops unconditional raw.html upload. Reads `job.data.debugMode`; uploads raw.html under `debug/raw.html` only if true. Builds + uploads `manifest.json` last. Manifest path is *not* persisted to Mongo. |
+| [backend/src/controllers/scrapedData.controller.ts](backend/src/controllers/scrapedData.controller.ts) | `postSchema` accepts `debugMode`; controller passes it through into the BullMQ job payload. |
+| [scripts/migrate-storage-v2.ts](scripts/migrate-storage-v2.ts) | No longer uploads legacy `rawHtml` to R2. `$unset` clauses extended to drop both legacy inline `rawHtml` and any `r2.rawHtml` keys written by v2 worker. Header re-titled v2.1. |
+
+### 13.6 Migration impact
+
+If you already ran the v2 migration: `r2.rawHtml` keys exist in some Mongo docs. Re-run the migration script — it's idempotent and now $unsets those keys. Already-uploaded `websites/{slug}/raw.html` objects in R2 remain (no automated cleanup); delete via R2 console if you want them gone:
+
+```bash
+# List existing raw.html objects
+aws s3 ls s3://designprobe/websites/ --recursive --endpoint-url "$R2_ENDPOINT" --profile r2-backup \
+  | grep '/raw\.html$'
+
+# Bulk delete (review the list first!)
+aws s3 ls s3://designprobe/websites/ --recursive --endpoint-url "$R2_ENDPOINT" --profile r2-backup \
+  | grep '/raw\.html$' \
+  | awk '{print $4}' \
+  | xargs -I {} aws s3 rm s3://designprobe/{} --endpoint-url "$R2_ENDPOINT" --profile r2-backup
+```
+
+### 13.7 Verification after deploy
+
+```bash
+# 1. Fresh non-debug scrape — should NOT produce raw.html
+curl -s http://localhost:3000/api/scraped-data -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://stripe.com/","force":true}'
+# Wait for completion, then:
+aws s3 ls s3://designprobe/websites/stripe.com/ --endpoint-url "$R2_ENDPOINT" --profile r2-backup
+# Expect:  manifest.json, preview.html, design.md, screenshot.jpg,
+#          design_tokens.json, semantic_structure.json
+# Should NOT contain raw.html or debug/
+
+# 2. Debug-mode scrape
+curl -s http://localhost:3000/api/scraped-data -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://stripe.com/","force":true,"debugMode":true}'
+# After completion:
+aws s3 ls s3://designprobe/websites/stripe.com/debug/ --endpoint-url "$R2_ENDPOINT" --profile r2-backup
+# Expect: raw.html present
+
+# 3. Manifest sanity check
+curl -s "$R2_PUBLIC_BASE/websites/stripe.com/manifest.json" | jq '.storageVersion, .debug // "no debug"'
+# Expect: "v2.1" and (the debug block from the debugMode run, or "no debug")
+
+# 4. Mongo schema check
+mongosh --quiet --eval '
+  const d = db.getSiblingDB("stylemd").scraped_data.findOne({url:"https://stripe.com/"}, {r2:1, storageVersion:1});
+  printjson(d);
+'
+# Expect: storageVersion: "v2.1", r2 has no rawHtml field.
+```
+
+

@@ -3,22 +3,42 @@ import { z } from "zod";
 import { ScrapedData } from "../models/ScrapedData";
 import { safeWrite } from "@/lib/mongodb";
 import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
-import { isValidScrapedRecord } from "../utils/validation";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
+import { r2PublicUrl } from "@/lib/queue/r2";
 
 // ---------------------------------------------------------------------------
 // POST /api/scraped-data  { url }
-// Enqueues a scrape job in BullMQ. Returns 202 + jobId. Worker process picks it up.
+//
+// Cache hit: 302-redirect to the public R2 preview URL (storage v2 — the HTML
+// no longer lives in Mongo). Cache miss: enqueue a scrape job in BullMQ and
+// return 202 with jobId.
 // ---------------------------------------------------------------------------
 
 const postSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
   force: z.boolean().optional().default(false),
+  /**
+   * Storage v2.1: when true, the worker also uploads raw.html to
+   * `websites/{slug}/debug/raw.html`. Off by default.
+   */
+  debugMode: z.boolean().optional().default(false),
 });
 
 const MAX_WAITING = parseInt(process.env.QUEUE_MAX_WAITING || "500", 10);
+
+type ScrapedDoc = {
+  url: string;
+  status?: string | null;
+  runId?: string | null;
+  r2?: {
+    slug?: string | null;
+    previewHtml?: string | null;
+    designMd?: string | null;
+    screenshot?: string | null;
+  } | null;
+};
 
 export async function createScrapedData(req: Request, res: Response): Promise<void> {
   try {
@@ -31,40 +51,31 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
     const parsed = postSchema.parse(req.body);
     const provider = parsed.provider;
     const force = parsed.force;
+    const debugMode = parsed.debugMode;
     const urlNormalized = canonicalPageUrl(url);
     const tag = `[SCRAPE ${urlNormalized}]`;
     const t0 = Date.now();
     const elapsed = (): string => `+${Date.now() - t0}ms`;
     console.log(`${tag} request received force=${force}`);
 
-    // ── Cache check — serve completed runs straight from Mongo ─────────────
+    // ── Cache check — redirect to R2 if completed ────────────────────────
     if (!force) {
-      console.log(`${tag} cache lookup… ${elapsed()}`);
       const variants = pageUrlVariantsForLookup(urlNormalized);
-      const existing = await ScrapedData.findOne({ url: { $in: variants } }).lean<{
-        url: string;
-        images: string[];
-        contentText: string;
-        rawHtml: string;
-        previewHtml?: string;
-        runServeUrl?: string;
-        runId?: string;
-        status?: string;
-      } | null>();
+      const existing = await ScrapedData.findOne({ url: { $in: variants } }).lean<ScrapedDoc | null>();
 
-      if (existing && isValidScrapedRecord(existing) && existing.previewHtml) {
-        const kb = Math.round(Buffer.byteLength(existing.previewHtml, "utf-8") / 1024);
-        console.log(`${tag} ✅ cache HIT — sending ${kb}KB preview.html ${elapsed()}`);
-        res.set("Content-Type", "text/html; charset=utf-8").send(existing.previewHtml);
-        return;
+      if (existing?.status === "completed" && existing.r2?.previewHtml) {
+        const publicUrl = r2PublicUrl(existing.r2.previewHtml);
+        if (publicUrl) {
+          console.log(`${tag} ✅ cache HIT — redirecting to ${publicUrl} ${elapsed()}`);
+          res.redirect(302, publicUrl);
+          return;
+        }
       }
-      console.log(`${tag} cache MISS (existing=${!!existing}) ${elapsed()}`);
+      console.log(`${tag} cache MISS (existing=${!!existing}, status=${existing?.status}) ${elapsed()}`);
     }
 
     // ── Backpressure ───────────────────────────────────────────────────────
-    console.log(`${tag} → getWaitingCount… ${elapsed()}`);
     const waiting = await scrapeQueue.getWaitingCount();
-    console.log(`${tag} ← getWaitingCount=${waiting} ${elapsed()}`);
     if (waiting > MAX_WAITING) {
       console.warn(`${tag} ❌ queue full waiting=${waiting}`);
       res.status(429).json({ ok: false, error: "Queue is full. Please retry shortly.", waiting });
@@ -72,12 +83,9 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
     }
 
     // ── Enqueue ────────────────────────────────────────────────────────────
-    // BullMQ rejects ':' in custom job IDs, so we use '-' as the separator.
+    // BullMQ rejects ':' in custom job IDs — use '-' as the separator.
     const jobId = `scrape-${urlToSlug(urlNormalized)}`;
-
-    console.log(`${tag} → getJob(${jobId})… ${elapsed()}`);
     const existingJob = await scrapeQueue.getJob(jobId);
-    console.log(`${tag} ← getJob existing=${!!existingJob} ${elapsed()}`);
 
     if (existingJob && !force) {
       const state = await existingJob.getState();
@@ -98,11 +106,8 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
       await existingJob.remove().catch(() => undefined);
     }
 
-    console.log(`${tag} → queue.add… ${elapsed()}`);
-    await scrapeQueue.add("scrape", { url: urlNormalized, provider }, { jobId });
-    console.log(`${tag} ← queue.add done ${elapsed()}`);
+    await scrapeQueue.add("scrape", { url: urlNormalized, provider, debugMode }, { jobId });
 
-    console.log(`${tag} → mongo upsert… ${elapsed()}`);
     await safeWrite(() =>
       ScrapedData.updateOne(
         { url: urlNormalized },
@@ -113,7 +118,6 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
         { upsert: true },
       ),
     );
-    console.log(`${tag} ← mongo upsert done ${elapsed()}`);
 
     console.log(`${tag} 🚀 enqueued jobId=${jobId} ${elapsed()}`);
     res.status(202).json({ ok: true, jobId, status: "queued", url: urlNormalized });
@@ -123,27 +127,37 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
   }
 }
 
+/**
+ * GET /api/scraped-data?url=...   → returns single doc with R2 URLs resolved.
+ * GET /api/scraped-data           → returns last 100 docs (metadata only).
+ */
 export async function listScrapedData(req: Request, res: Response): Promise<void> {
   try {
     const { url } = req.query as { url?: string };
 
     if (url) {
       const variants = pageUrlVariantsForLookup(canonicalPageUrl(url));
-      const doc = await ScrapedData.findOne({ url: { $in: variants } }).lean();
-      if (doc) {
-        res.json({ ok: true, data: doc });
-        return;
-      }
-      res.json({ ok: true, data: null });
+      const doc = await ScrapedData.findOne({ url: { $in: variants } }).lean<ScrapedDoc | null>();
+      res.json({ ok: true, data: doc ? withR2Urls(doc) : null });
       return;
     }
 
-    const data = await ScrapedData.find({}, { rawHtml: 0, previewHtml: 0, designMd: 0 })
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .lean();
-    res.json({ ok: true, data });
+    const docs = await ScrapedData.find({}).sort({ updatedAt: -1 }).limit(100).lean<ScrapedDoc[]>();
+    res.json({ ok: true, data: docs.map(withR2Urls) });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/** Attach resolved public R2 URLs without mutating the stored keys. */
+function withR2Urls(doc: ScrapedDoc & Record<string, unknown>): Record<string, unknown> {
+  const r2 = doc.r2 ?? {};
+  return {
+    ...doc,
+    r2Urls: {
+      previewHtml: r2PublicUrl(r2.previewHtml),
+      designMd: r2PublicUrl(r2.designMd),
+      screenshot: r2PublicUrl(r2.screenshot),
+    },
+  };
 }

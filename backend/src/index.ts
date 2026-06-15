@@ -10,7 +10,7 @@ import { config } from "./config/env";
 async function start(): Promise<void> {
   console.log("---------------------------------------------------------------------------");
   console.log(`[startup] BUILD_ID: ${Date.now()}`); // Detect stale PM2 dist code
-  console.log(`[startup] booting StyleMD standalone backend on port ${config.port}`);
+  console.log(`[startup] booting Design Probe backend on port ${config.port}`);
   console.log(`[startup] environment: ${config.nodeEnv}`);
   console.log("---------------------------------------------------------------------------");
 

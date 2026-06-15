@@ -153,24 +153,35 @@ export async function runSimplifiedStyleMdPipeline(
     runIdLog(runIdValue, `[DEBUG] Scrape FAILED (returned null) for ${url}`, "warn");
   }
 
-  // 🔴 STEP 2: OPTIONAL/NON-BLOCKING SCRAPED DATA PERSIST
+  // 🔴 STEP 2: OPTIONAL/NON-BLOCKING SCRAPED DATA PERSIST (slim — storage v2)
+  // Only lightweight metadata; HTML/markdown/screenshots are uploaded to R2
+  // by the worker after this pipeline completes.
   if (scraped) {
-    // We do NOT wait for this to block the pipeline
     safeWrite(() =>
       ScrapedData.updateOne(
         { url: canonUrl },
         {
           $set: {
-            ...scraped,
             url: canonUrl,
-            updatedAt: new Date()
+            title: scraped.title ?? null,
+            description: scraped.description ?? null,
+            h1: scraped.h1 ?? null,
+            canonical: scraped.canonical ?? null,
+            contentText: scraped.contentText ?? null,
+            runId: runIdValue,
+            status: "running",
+            updatedAt: new Date(),
           },
-          $setOnInsert: { createdAt: new Date() }
+          $setOnInsert: { createdAt: new Date() },
         },
-        { upsert: true }
-      )
-    ).catch(e => {
-      runIdLog(runIdValue, `[FALLBACK_TRIGGERED] ScrapedData optional persist failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+        { upsert: true },
+      ),
+    ).catch((e) => {
+      runIdLog(
+        runIdValue,
+        `[FALLBACK_TRIGGERED] ScrapedData optional persist failed: ${e instanceof Error ? e.message : String(e)}`,
+        "warn",
+      );
     });
   }
 
@@ -419,21 +430,10 @@ export async function runSimplifiedStyleMdPipeline(
           .toBuffer();
 
         if (compressedBuffer.length <= 1_500_000) {
+          // Keep base64 in memory for the worker to upload to R2; no longer
+          // persisted to Mongo (storage v2 — screenshots live in R2 only).
           screenshotBase64Var = `data:image/jpeg;base64,${compressedBuffer.toString("base64")}`;
-          
-          await safeWrite(() =>
-            StyleMdRun.updateOne(
-              { runId: runIdValue },
-              { 
-                $set: { 
-                  screenshot: screenshotBase64Var,
-                  images: [screenshotBase64Var],
-                  updatedAt: new Date()
-                } 
-              }
-            )
-          );
-          runIdLog(runIdValue, "[SCREENSHOT] Persisted screenshot to MongoDB immediately.");
+          runIdLog(runIdValue, "[SCREENSHOT] Captured (will be uploaded to R2 by worker)");
         }
       } catch (ssErr) {
         console.warn(`[SCREENSHOT] ⚠️ Failed to capture screenshot: ${ssErr instanceof Error ? ssErr.message : String(ssErr)}`);

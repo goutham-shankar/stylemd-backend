@@ -1,14 +1,14 @@
 /**
  * PM2 ecosystem — two apps:
- *   - stylemd-api    : HTTP server (light, fast restart)
- *   - stylemd-worker : BullMQ worker (heavy, Playwright + Chromium)
+ *   - designprobe-api    : HTTP server (light, fast restart)
+ *   - designprobe-worker : BullMQ worker (heavy, Playwright + Chromium)
  *
  * Production: pm2 start ecosystem.config.js --env production
  */
 module.exports = {
   apps: [
     {
-      name: "stylemd-api",
+      name: "designprobe-api",
       script: "dist/backend/src/index.js",
       instances: 1,
       exec_mode: "fork",
@@ -23,7 +23,7 @@ module.exports = {
       time: true,
     },
     {
-      name: "stylemd-worker",
+      name: "designprobe-worker",
       script: "dist/backend/src/worker.js",
       instances: 1,
       exec_mode: "fork",

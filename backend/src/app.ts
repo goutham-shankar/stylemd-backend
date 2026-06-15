@@ -23,14 +23,7 @@ export function createApp(): express.Application {
 
   app.use(express.static(path.join(__dirname, "../public")));
 
-  // Serve saved preview HTML files at /runs/<slug>/preview.html (legacy local FS path).
-  app.use("/runs", express.static(path.join(process.cwd(), "runs"), {
-    dotfiles: "ignore",
-    index: false,
-    setHeaders(res) {
-      res.setHeader("Cache-Control", "no-store");
-    },
-  }));
+  // (Legacy /runs static mount removed in storage v2 — artifacts live in R2.)
 
   app.use(
     "/styleguide-files/:runId",
