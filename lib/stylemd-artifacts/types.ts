@@ -1,3 +1,5 @@
+import type { KimiCostEstimate, KimiTokenUsage } from "@/lib/services/kimiUsage";
+
 export const STYLEMD_PIPELINE_STAGES = ["capture", "extract", "dedup", "curate", "styleguide", "showcase"] as const;
 
 export type StyleMdPipelineStageName = (typeof STYLEMD_PIPELINE_STAGES)[number];
@@ -325,6 +327,13 @@ export interface StyleMdCurateResult {
   curatedManifest: StyleMdCuratedManifest;
   keptComponentIds: string[];
   deletedComponentIds: string[];
+  query: KimiTokenUsage & {
+    maxTurns: number;
+    timeoutMs: number;
+    durationMs: number;
+    failed: boolean;
+    failureReason?: string;
+  };
 }
 
 export interface StyleMdParsedUnitReconstruction {
@@ -452,6 +461,8 @@ export interface StyleMdRunSummary {
   warnings: string[];
   artifacts: StyleMdArtifactRecord[];
   metrics: StyleMdMetrics;
+  tokenUsage?: KimiTokenUsage;
+  costEstimate?: KimiCostEstimate;
   showcase: {
     available: boolean;
     canonicalUrl: string;

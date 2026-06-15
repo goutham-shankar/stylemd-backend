@@ -6,6 +6,7 @@ import { stripLeadingModelPreamble } from "@/lib/services/styleMarkdownSanitize"
 import { scrape } from "@/backend/src/services/scraper";
 import { isValidScrapedRecord } from "@/backend/src/utils/validation";
 import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
+import type { KimiCostEstimate, KimiTokenUsage } from "@/lib/services/kimiUsage";
 
 /**
  * Generate a deterministic, stable slug from a URL.
@@ -67,6 +68,8 @@ export type PersistStyleMdInput = {
   styleMd: string;
   designTokens?: Record<string, unknown> | null;
   screenshot: string; // base64 ONLY
+  tokenUsage?: KimiTokenUsage | null;
+  costEstimate?: KimiCostEstimate | null;
   slug?: string;
   runStatus?: string;
   brandAssets?: {
@@ -129,6 +132,8 @@ export async function persistStyleMdAfterGeneration(input: PersistStyleMdInput):
     model: input.model,
     styleMd,
     designTokens: input.designTokens ?? null,
+    tokenUsage: input.tokenUsage ?? null,
+    costEstimate: input.costEstimate ?? null,
     status,
     updatedAt: now,
     title: input.title,

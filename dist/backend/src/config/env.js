@@ -6,7 +6,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.config = void 0;
 exports.config = {
-    port: parseInt(process.env.PORT || "3002", 10),
+    port: parseInt(process.env.PORT || "3000", 10),
     get mongoUri() {
         const uri = process.env.MONGO_URI;
         if (!uri) {

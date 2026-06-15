@@ -1,0 +1,26 @@
+{
+  "files.watcherExclude": {
+    "**/.playground/**": true,
+    "**/runs/**": true,
+    "**/dist/**": true,
+    "**/node_modules/**": true,
+    "**/.git/**": true,
+    "**/logs/**": true
+  },
+  "files.exclude": {
+    "**/.playground": true,
+    "**/runs": true,
+    "**/dist": true
+  },
+  "search.exclude": {
+    "**/.playground": true,
+    "**/runs": true,
+    "**/dist": true,
+    "**/node_modules": true,
+    "**/package-lock.json": true
+  },
+  "typescript.tsserver.watchOptions": {
+    "watchFile": "useFsEventsOnParentDirectory",
+    "excludeDirectories": ["**/.playground", "**/runs", "**/dist", "**/node_modules"]
+  }
+}

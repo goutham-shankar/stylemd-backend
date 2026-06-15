@@ -1,19 +1,15 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { join } from "node:path";
 import { ScrapedData } from "../models/ScrapedData";
 import { safeWrite } from "@/lib/mongodb";
 import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import { isValidScrapedRecord } from "../utils/validation";
-import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
-import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
-import { saveRunHtml, saveRunDesignMd } from "../services/runStorage";
-import { renderFromRunDir } from "../services/designSystemRenderer";
+import { scrapeQueue } from "@/lib/queue/scrapeQueue";
+import { urlToSlug } from "../services/runStorage";
 
 // ---------------------------------------------------------------------------
 // POST /api/scraped-data  { url }
-// Starts the full StyleMD pipeline, responds immediately with runId + status.
-// When the pipeline finishes the showcase HTML is saved to runs/<slug>/.
+// Enqueues a scrape job in BullMQ. Returns 202 + jobId. Worker process picks it up.
 // ---------------------------------------------------------------------------
 
 const postSchema = z.object({
@@ -22,10 +18,9 @@ const postSchema = z.object({
   force: z.boolean().optional().default(false),
 });
 
-export async function createScrapedData(req: Request, res: Response): Promise<void> {
-  req.socket.setTimeout(0);
-  res.setTimeout(0);
+const MAX_WAITING = parseInt(process.env.QUEUE_MAX_WAITING || "500", 10);
 
+export async function createScrapedData(req: Request, res: Response): Promise<void> {
   try {
     const { url } = req.body as { url?: string };
     if (!url || typeof url !== "string") {
@@ -33,16 +28,21 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
       return;
     }
 
-    const { provider, force } = postSchema.parse(req.body);
+    const parsed = postSchema.parse(req.body);
+    const provider = parsed.provider;
+    const force = parsed.force;
     const urlNormalized = canonicalPageUrl(url);
-    console.log(`[SCRAPE] start url=${urlNormalized}`);
+    const tag = `[SCRAPE ${urlNormalized}]`;
+    const t0 = Date.now();
+    const elapsed = (): string => `+${Date.now() - t0}ms`;
+    console.log(`${tag} request received force=${force}`);
 
-    // ── Cache check ────────────────────────────────────────────────────────
+    // ── Cache check — serve completed runs straight from Mongo ─────────────
     if (!force) {
+      console.log(`${tag} cache lookup… ${elapsed()}`);
       const variants = pageUrlVariantsForLookup(urlNormalized);
       const existing = await ScrapedData.findOne({ url: { $in: variants } }).lean<{
         url: string;
-        retryCount?: number;
         images: string[];
         contentText: string;
         rawHtml: string;
@@ -52,102 +52,71 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
         status?: string;
       } | null>();
 
-      if (existing && isValidScrapedRecord(existing)) {
-        console.log(`[SCRAPE] db-hit (valid) url=${urlNormalized}`);
-        if (existing.previewHtml) {
-          res.set("Content-Type", "text/html; charset=utf-8").send(existing.previewHtml);
-          return;
-        }
+      if (existing && isValidScrapedRecord(existing) && existing.previewHtml) {
+        const kb = Math.round(Buffer.byteLength(existing.previewHtml, "utf-8") / 1024);
+        console.log(`${tag} ✅ cache HIT — sending ${kb}KB preview.html ${elapsed()}`);
+        res.set("Content-Type", "text/html; charset=utf-8").send(existing.previewHtml);
+        return;
       }
+      console.log(`${tag} cache MISS (existing=${!!existing}) ${elapsed()}`);
+    }
 
-      // Already running — don't start a second pipeline
-      if (existing?.status === "running") {
-        res.status(409).json({
-          ok: false,
-          error: "A run is already in progress for this URL.",
-          runId: existing.runId,
+    // ── Backpressure ───────────────────────────────────────────────────────
+    console.log(`${tag} → getWaitingCount… ${elapsed()}`);
+    const waiting = await scrapeQueue.getWaitingCount();
+    console.log(`${tag} ← getWaitingCount=${waiting} ${elapsed()}`);
+    if (waiting > MAX_WAITING) {
+      console.warn(`${tag} ❌ queue full waiting=${waiting}`);
+      res.status(429).json({ ok: false, error: "Queue is full. Please retry shortly.", waiting });
+      return;
+    }
+
+    // ── Enqueue ────────────────────────────────────────────────────────────
+    // BullMQ rejects ':' in custom job IDs, so we use '-' as the separator.
+    const jobId = `scrape-${urlToSlug(urlNormalized)}`;
+
+    console.log(`${tag} → getJob(${jobId})… ${elapsed()}`);
+    const existingJob = await scrapeQueue.getJob(jobId);
+    console.log(`${tag} ← getJob existing=${!!existingJob} ${elapsed()}`);
+
+    if (existingJob && !force) {
+      const state = await existingJob.getState();
+      if (state === "waiting" || state === "active" || state === "delayed") {
+        console.log(`${tag} ⏳ job already ${state} jobId=${jobId} — returning 202 ${elapsed()}`);
+        res.status(202).json({
+          ok: true,
+          jobId,
+          status: state,
+          url: urlNormalized,
+          message: "Job already in progress for this URL.",
         });
         return;
       }
     }
+    if (existingJob && force) {
+      console.log(`${tag} force=true → removing prior job ${jobId}`);
+      await existingJob.remove().catch(() => undefined);
+    }
 
-    // ── Generate a runId and mark as running ───────────────────────────────
-    const runIdValue = `stylemd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    console.log(`${tag} → queue.add… ${elapsed()}`);
+    await scrapeQueue.add("scrape", { url: urlNormalized, provider }, { jobId });
+    console.log(`${tag} ← queue.add done ${elapsed()}`);
 
+    console.log(`${tag} → mongo upsert… ${elapsed()}`);
     await safeWrite(() =>
       ScrapedData.updateOne(
         { url: urlNormalized },
         {
-          $set: { url: urlNormalized, runId: runIdValue, status: "running", updatedAt: new Date() },
+          $set: { url: urlNormalized, runId: jobId, status: "queued", updatedAt: new Date() },
           $setOnInsert: { createdAt: new Date() },
         },
-        { upsert: true }
-      )
+        { upsert: true },
+      ),
     );
+    console.log(`${tag} ← mongo upsert done ${elapsed()}`);
 
-    // Respond immediately — pipeline runs in background
-    res.json({ ok: true, runId: runIdValue, status: "running", url: urlNormalized });
-
-    // ── Run the full pipeline in background ────────────────────────────────
-    void (async () => {
-      try {
-        const result = await runSimplifiedStyleMdPipeline(urlNormalized, provider, runIdValue);
-
-        const runDir = getStyleMdRunDir(result.runId);
-        let previewHtml: string | null = null;
-        let designMd: string | null = null;
-        let runServeUrl: string | null = null;
-        let designMdUrl: string | null = null;
-
-        // Render design system HTML + Markdown from semantic_analysis.json (Stage 2 output,
-        // always available regardless of whether Kimi stages 4-5 succeeded).
-        try {
-          const rendered = await renderFromRunDir(runDir, urlNormalized);
-          if (rendered) {
-            previewHtml = rendered.html;
-            designMd = rendered.md;
-            const savedHtml = await saveRunHtml(urlNormalized, rendered.html);
-            runServeUrl = savedHtml.serveUrl;
-            const savedMd = await saveRunDesignMd(urlNormalized, rendered.md);
-            designMdUrl = savedMd.serveUrl;
-            console.log(`[SCRAPE] saved design system HTML → ${savedHtml.filePath}`);
-            console.log(`[SCRAPE] saved design.md → ${savedMd.filePath}`);
-          } else {
-            console.warn(`[SCRAPE] design system renderer returned null for runDir=${runDir}`);
-          }
-        } catch (e) {
-          console.warn(`[SCRAPE] design system renderer error:`, e instanceof Error ? e.message : String(e));
-        }
-
-        await safeWrite(() =>
-          ScrapedData.updateOne(
-            { url: urlNormalized },
-            {
-              $set: {
-                status: "completed",
-                runId: result.runId,
-                previewHtml,
-                designMd,
-                runServeUrl,
-                designMdUrl,
-                updatedAt: new Date(),
-              },
-            }
-          )
-        );
-
-        console.log(`[SCRAPE] pipeline complete url=${urlNormalized} runId=${result.runId}`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[SCRAPE] pipeline error url=${urlNormalized}:`, message);
-        await safeWrite(() =>
-          ScrapedData.updateOne(
-            { url: urlNormalized },
-            { $set: { status: "failed", error: message, updatedAt: new Date() } }
-          )
-        ).catch(() => undefined);
-      }
-    })();
+    console.log(`${tag} 🚀 enqueued jobId=${jobId} ${elapsed()}`);
+    res.status(202).json({ ok: true, jobId, status: "queued", url: urlNormalized });
   } catch (err) {
     const status = err instanceof z.ZodError ? 400 : 500;
     res.status(status).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -169,7 +138,10 @@ export async function listScrapedData(req: Request, res: Response): Promise<void
       return;
     }
 
-    const data = await ScrapedData.find({}, { rawHtml: 0, previewHtml: 0, designMd: 0 }).sort({ createdAt: -1 }).limit(100).lean();
+    const data = await ScrapedData.find({}, { rawHtml: 0, previewHtml: 0, designMd: 0 })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
     res.json({ ok: true, data });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });

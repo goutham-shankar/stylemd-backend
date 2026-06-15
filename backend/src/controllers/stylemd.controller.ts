@@ -11,6 +11,7 @@ import { pageUrlVariantsForLookup, canonicalPageUrl } from "@/lib/services/pageU
 import { resolveStyleMdForRunDoc } from "@/lib/services/resolveStyleMdFromStores";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
+import type { KimiCostEstimate, KimiTokenUsage } from "@/lib/services/kimiUsage";
 
 import { isValidScrapedRecord } from "../utils/validation";
 import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
@@ -23,6 +24,8 @@ interface StyleMdRunDoc {
   model?: string;
   styleMd?: string;
   images?: string[];
+  tokenUsage?: KimiTokenUsage | null;
+  costEstimate?: KimiCostEstimate | null;
   status?: string;
   createdAt?: Date;
   retryCount?: number;
@@ -80,6 +83,8 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
           runId: existing.runId,
           styleMd: existing.styleMd,
           images: existing.images ?? [],
+          tokenUsage: existing.tokenUsage ?? null,
+          costEstimate: existing.costEstimate ?? null,
           provider: existing.provider,
           model: existing.model,
           status: existing.status,
@@ -102,6 +107,8 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
             runId: existing.runId,
             styleMd: existing.styleMd,
             images: existing.images ?? [],
+            tokenUsage: existing.tokenUsage ?? null,
+            costEstimate: existing.costEstimate ?? null,
             provider: existing.provider,
             model: existing.model,
             status: existing.status,
@@ -232,6 +239,8 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
           url: doc.url,
           styleMd: "",
           images: [],
+          tokenUsage: doc.tokenUsage ?? null,
+          costEstimate: doc.costEstimate ?? null,
           provider: doc.provider,
           model: doc.model,
           status: "processing",
@@ -258,6 +267,8 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
         styleMd,
         designTokens: (doc as any).designTokens ?? null,
         images: doc.images ?? [],
+        tokenUsage: doc.tokenUsage ?? null,
+        costEstimate: doc.costEstimate ?? null,
         title: (doc as any).title,
         description: (doc as any).description,
         h1: (doc as any).h1,
@@ -281,7 +292,7 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
   try {
     const runs = await StyleMdRun.find({})
       .sort({ createdAt: -1 })
-      .select("url slug runId provider model status createdAt title brandAssets")
+      .select("url slug runId provider model status createdAt title brandAssets tokenUsage costEstimate")
       .lean<StyleMdRunDoc[]>();
 
     res.json({
@@ -295,6 +306,8 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
         provider: r.provider ?? "kimi",
         model: r.model,
         status: r.status ?? "completed",
+        tokenUsage: r.tokenUsage ?? null,
+        costEstimate: r.costEstimate ?? null,
         createdAt: (r.createdAt as Date)?.toISOString?.() ?? String(r.createdAt),
       })),
     });

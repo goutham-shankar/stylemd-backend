@@ -2,12 +2,15 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 // Converts a URL into a filesystem-safe slug.
-// e.g. "https://getdesign.md/design-md/nintendo-2001/preview" → "getdesign.md_design-md_nintendo-2001_preview"
-function urlToSlug(url: string): string {
+// Root URL → just hostname:           "https://apple.com/"               → "apple.com"
+// Sub-path  → hostname_path:           "https://apple.com/iphone"         → "apple.com_iphone"
+// Deep path →                          "https://getdesign.md/x/nintendo"  → "getdesign.md_x_nintendo"
+export function urlToSlug(url: string): string {
   try {
     const { hostname, pathname } = new URL(url);
-    const pathSlug = pathname.replace(/^\/+|\/+$/g, "").replace(/\//g, "_") || "index";
-    return `${hostname}_${pathSlug}`.replace(/[^a-z0-9_\-\.]/gi, "_").slice(0, 120);
+    const pathSlug = pathname.replace(/^\/+|\/+$/g, "").replace(/\//g, "_");
+    const base = pathSlug ? `${hostname}_${pathSlug}` : hostname;
+    return base.replace(/[^a-z0-9_\-\.]/gi, "_").slice(0, 120);
   } catch {
     return url.replace(/[^a-z0-9_\-]/gi, "_").slice(0, 120);
   }

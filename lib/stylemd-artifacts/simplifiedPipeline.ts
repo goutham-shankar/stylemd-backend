@@ -38,6 +38,7 @@ import {
 import { runCurateStage } from "@/lib/stylemd-artifacts/curation";
 import { runShowcaseStage, runStyleguideStage, StyleguideStageError } from "@/lib/stylemd-artifacts/styleguide";
 import { markStyleMdRunPendingInMongo, persistStyleMdAfterGeneration } from "@/lib/services/persistStyleMdMongo";
+import { accumulateKimiTokenUsage, createEmptyKimiTokenUsage, estimateKimiCost } from "@/lib/services/kimiUsage";
 import {
   resolveStyleMdRuntimeConfig,
   type StyleMdRuntimeConfig,
@@ -176,6 +177,7 @@ export async function runSimplifiedStyleMdPipeline(
   const config = mergeConfig({});
 
   let state = createInitialRunState(runIdValue, url, runtime.provider, runtime.model);
+  let aggregateTokenUsage = createEmptyKimiTokenUsage();
 
   // Use Kimi for curation and generation stages to reduce costs and use high-reasoning models
   const kimiRuntime = resolveStyleMdRuntimeConfig("kimi");
@@ -447,6 +449,7 @@ export async function runSimplifiedStyleMdPipeline(
       });
 
       registerArtifacts(output.artifacts);
+      aggregateTokenUsage = accumulateKimiTokenUsage(aggregateTokenUsage, output.result.query);
       state = updateRunState(state, {
         metrics: {
           ...state.metrics,
@@ -569,6 +572,7 @@ export async function runSimplifiedStyleMdPipeline(
         });
 
         registerArtifacts(output.artifacts);
+        aggregateTokenUsage = accumulateKimiTokenUsage(aggregateTokenUsage, output.result.query);
         await publishState();
         await mongoKeepAlive();
         return output.result;
@@ -576,6 +580,9 @@ export async function runSimplifiedStyleMdPipeline(
     } catch (error) {
       if (error instanceof StyleguideStageError) {
         hasStyleguideWarning = true;
+        if (error.query) {
+          aggregateTokenUsage = accumulateKimiTokenUsage(aggregateTokenUsage, error.query);
+        }
         state = updateRunState(state, {
           warnings: [...state.warnings, error.warning],
         });
@@ -605,6 +612,7 @@ export async function runSimplifiedStyleMdPipeline(
       });
 
       registerArtifacts(output.artifacts);
+      aggregateTokenUsage = accumulateKimiTokenUsage(aggregateTokenUsage, output.result.query);
       state = updateRunState(state, {
         showcase: output.result.showcase,
       });
@@ -653,6 +661,8 @@ export async function runSimplifiedStyleMdPipeline(
       ],
       artifacts: state.artifacts,
       metrics: state.metrics,
+      tokenUsage: aggregateTokenUsage,
+      costEstimate: estimateKimiCost(runtime.model, aggregateTokenUsage),
       showcase: state.showcase,
     };
 
@@ -676,6 +686,8 @@ export async function runSimplifiedStyleMdPipeline(
         designTokens,
         screenshot: screenshotBase64Var,
         runStatus: summary.status,
+        tokenUsage: summary.tokenUsage,
+        costEstimate: summary.costEstimate,
         brandAssets: scraped?.brandAssets,
         extractionMetadata: extractionMetadataVar,
         title: scraped?.title,
@@ -728,6 +740,8 @@ export async function runSimplifiedStyleMdPipeline(
       warnings: state.warnings,
       artifacts: state.artifacts,
       metrics: state.metrics,
+      tokenUsage: aggregateTokenUsage,
+      costEstimate: estimateKimiCost(runtime.model, aggregateTokenUsage),
       showcase: {
         available: false,
         canonicalUrl: "",

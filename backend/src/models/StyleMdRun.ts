@@ -12,6 +12,8 @@ const StyleMdRunSchema = new mongoose.Schema({
   runId: { type: String, required: true, unique: true, index: true }, // Added unique: true and required
   styleMd: { type: String },
   designTokens: { type: mongoose.Schema.Types.Mixed, default: null }, // structured stylemd-json tokens
+  tokenUsage: { type: mongoose.Schema.Types.Mixed, default: null },
+  costEstimate: { type: mongoose.Schema.Types.Mixed, default: null },
   images: { type: [String], default: [] }, // base64 ONLY
   screenshot: { type: String }, // 🔴 ADDED: Primary base64 screenshot
   

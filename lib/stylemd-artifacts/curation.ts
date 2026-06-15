@@ -21,6 +21,7 @@ import {
   errorToMessage,
   nowIso,
 } from "@/lib/stylemd-artifacts/helpers";
+import { createEmptyKimiTokenUsage } from "@/lib/services/kimiUsage";
 import type {
   StyleMdArtifactRecord,
   StyleMdComponentEntry,
@@ -37,6 +38,11 @@ const tokenUsageMap = new Map<string, { inputTokens: number; outputTokens: numbe
 function storeTokenUsage(runId: string, queryLabel: string, inputTokens: number, outputTokens: number): void {
   const key = `${runId}::${queryLabel}`;
   tokenUsageMap.set(key, { inputTokens, outputTokens });
+}
+
+function getTokenUsage(runId: string, queryLabel: string): { inputTokens: number; outputTokens: number } {
+  const key = `${runId}::${queryLabel}`;
+  return tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
 }
 
 type ObservableEventPayload = {
@@ -1060,6 +1066,13 @@ export async function runCurateStage(input: RunCurateInput): Promise<StageOutput
         curatedManifest: applied.curatedManifest,
         keptComponentIds: [],
         deletedComponentIds: [],
+        query: {
+          ...createEmptyKimiTokenUsage(),
+          maxTurns: 0,
+          timeoutMs: CURATION_QUERY_TIMEOUT_MS,
+          durationMs: 0,
+          failed: false,
+        },
       },
       artifacts,
     };
@@ -1090,6 +1103,7 @@ export async function runCurateStage(input: RunCurateInput): Promise<StageOutput
   let parsed: ParsedCurationResponse | null = null;
   let lastDecisionRaw = "";
   let queryError: string | undefined;
+  let queryTokens = createEmptyKimiTokenUsage();
   const decisionPrompt = buildDecisionPrompt(promptInput);
   const workspaceDir = await prepareCurateWorkspace({
     runDir,
@@ -1110,6 +1124,7 @@ export async function runCurateStage(input: RunCurateInput): Promise<StageOutput
     });
     lastDecisionRaw = decisionRaw;
     parsed = parseAndValidateStyleMdCurationResponse(decisionRaw, allowedIds);
+    queryTokens = getTokenUsage(runId, "curate-decision");
   } catch (error) {
     queryError = errorToMessage(error);
     console.error(`\n❌ [CURATION] Query failed with error: ${queryError}`);
@@ -1219,6 +1234,14 @@ export async function runCurateStage(input: RunCurateInput): Promise<StageOutput
       curatedManifest: applied.curatedManifest,
       keptComponentIds: applied.keptComponentIds,
       deletedComponentIds: applied.deletedComponentIds,
+      query: {
+        ...queryTokens,
+        maxTurns: 0,
+        timeoutMs: CURATION_QUERY_TIMEOUT_MS,
+        durationMs: queryDurationMs,
+        failed: Boolean(queryError),
+        failureReason: queryError,
+      },
     },
     artifacts,
   };

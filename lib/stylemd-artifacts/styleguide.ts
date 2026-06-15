@@ -13,6 +13,7 @@ import {
   writeStyleMdJson,
   writeStyleMdText,
 } from "@/lib/stylemd-artifacts/artifacts";
+import type { KimiTokenUsage } from "@/lib/services/kimiUsage";
 import {
   resolveStyleMdRuntimeConfig,
   type StyleMdRuntimeConfig,
@@ -259,11 +260,31 @@ export class StyleguideStageError extends Error {
 
   public readonly warning: string;
 
-  public constructor(message: string, warning: string, artifacts: StyleMdArtifactRecord[]) {
+  public readonly query?: KimiTokenUsage & {
+    maxTurns: number;
+    timeoutMs: number;
+    durationMs: number;
+    failed: boolean;
+    failureReason?: string;
+  };
+
+  public constructor(
+    message: string,
+    warning: string,
+    artifacts: StyleMdArtifactRecord[],
+    query?: KimiTokenUsage & {
+      maxTurns: number;
+      timeoutMs: number;
+      durationMs: number;
+      failed: boolean;
+      failureReason?: string;
+    },
+  ) {
     super(message);
     this.name = "StyleguideStageError";
     this.warning = warning;
     this.artifacts = artifacts;
+    this.query = query;
   }
 }
 
@@ -2174,7 +2195,16 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
         attempts: attempt,
       },
     });
-    throw new StyleguideStageError(warning, warning, artifacts);
+    throw new StyleguideStageError(warning, warning, artifacts, {
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      maxTurns: 0,
+      timeoutMs: STYLEGUIDE_QUERY_TIMEOUT_MS,
+      durationMs: queryDurationMs,
+      failed: true,
+      failureReason,
+    });
   }
 
   const styleMdArtifact = await writeStyleMdText(runId, "style.md", styleMarkdown, "text");
