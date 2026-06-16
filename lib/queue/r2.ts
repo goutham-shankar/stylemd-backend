@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Version constants — bumped when pipeline output, worker code, or storage
@@ -195,4 +195,22 @@ export async function uploadR2(
 export async function deleteR2(key: string): Promise<void> {
   const bucket = envOrThrow("R2_BUCKET");
   await s3().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+/**
+ * Fetch an object's body as text. Used on the cache-hit path to return the
+ * design.md content that v2 storage keeps in R2 (not Mongo). Returns null on
+ * any failure so callers can degrade gracefully rather than throw.
+ */
+export async function fetchR2Text(key: string | null | undefined): Promise<string | null> {
+  if (!key) return null;
+  try {
+    const bucket = envOrThrow("R2_BUCKET");
+    const out = await s3().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+    const body = out.Body as { transformToString?: () => Promise<string> } | undefined;
+    if (body?.transformToString) return await body.transformToString();
+    return null;
+  } catch {
+    return null;
+  }
 }

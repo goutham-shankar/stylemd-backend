@@ -1,179 +1,158 @@
-import type { DesignSystemData } from "./designHtmlExtractor";
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.renderDesignHtml = renderDesignHtml;
 // ---------------------------------------------------------------------------
 // Renders a DesignSystemData object into the preview HTML format.
 // Output matches the structure of the sample preview.html.
 // ---------------------------------------------------------------------------
-
-function esc(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+function esc(str) {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
 }
-
-function cssVarsBlock(vars: Record<string, string>): string {
-  if (!Object.keys(vars).length) return "";
-  const lines = Object.entries(vars)
-    .map(([k, v]) => `    ${k}:${v};`)
-    .join("\n");
-  return `  :root{\n${lines}\n  }`;
+function cssVarsBlock(vars) {
+    if (!Object.keys(vars).length)
+        return "";
+    const lines = Object.entries(vars)
+        .map(([k, v]) => `    ${k}:${v};`)
+        .join("\n");
+    return `  :root{\n${lines}\n  }`;
 }
-
-function paletteSection(palette: DesignSystemData["palette"]): string {
-  const swatches = palette
-    .map(
-      (s) => `<div class="swatch">
+function paletteSection(palette) {
+    const swatches = palette
+        .map((s) => `<div class="swatch">
   <div class="swatch-fill" style="background:${esc(s.hex)};"></div>
   <div class="swatch-meta">
     <p class="swatch-name">${esc(s.name)}</p>
     <p class="swatch-hex">${esc(s.hex)}</p>
     <p class="swatch-role">${esc(s.role)}</p>
   </div>
-</div>`
-    )
-    .join("\n");
-  return `<section>
+</div>`)
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">01 — Foundations</span>
   <h2 class="section-heading">Color Palette</h2>
   <div class="palette-grid">${swatches}</div>
 </section>`;
 }
-
-function typographySection(typography: DesignSystemData["typography"]): string {
-  const rows = typography.rows
-    .map((r) => {
-      const styleStr = Object.entries(r.previewStyles)
-        .map(([k, v]) => `${k}:${v}`)
-        .join(";");
-      return `<div class="type-row">
+function typographySection(typography) {
+    const rows = typography.rows
+        .map((r) => {
+        const styleStr = Object.entries(r.previewStyles)
+            .map(([k, v]) => `${k}:${v}`)
+            .join(";");
+        return `<div class="type-row">
   <div class="type-meta">${esc(r.role)}<br>${esc(r.spec)}<br>lh ${esc(r.lineHeight)} · ls ${esc(r.letterSpacing)}<br><span style="color:#888;">${esc(r.usage)}</span></div>
   <div style="${esc(styleStr)}">${esc(r.previewText)}</div>
 </div>`;
     })
-    .join("\n");
-  return `<section>
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">02 — Foundations</span>
   <h2 class="section-heading">Typography</h2>
   <p style="color:#60619c;margin:-16px 0 28px;max-width:720px;">${esc(typography.note)}</p>
   ${rows}
 </section>`;
 }
-
-function buttonsSection(buttons: DesignSystemData["buttons"]): string {
-  const cards = buttons
-    .map(
-      (b) => `<div class="demo-card">
+function buttonsSection(buttons) {
+    const cards = buttons
+        .map((b) => `<div class="demo-card">
   <span class="label">${esc(b.label)}</span>
   ${b.buttonHtml}
   <p style="font-size:12px;color:#60619c;margin:12px 0 0;">${esc(b.description)}</p>
-</div>`
-    )
-    .join("\n");
-  return `<section>
+</div>`)
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">03 — Components</span>
   <h2 class="section-heading">Button Variants</h2>
   <div class="button-grid">${cards}</div>
 </section>`;
 }
-
-function surfacesSection(surfaces: DesignSystemData["surfaces"]): string {
-  const cards = surfaces
-    .map((s) => {
-      const colorStyle = s.textColor && s.textColor !== "#21242e"
-        ? `color:${esc(s.textColor)};border:none;`
-        : "";
-      return `<div class="feature-card" style="background:${esc(s.backgroundHex)};${colorStyle}">
+function surfacesSection(surfaces) {
+    const cards = surfaces
+        .map((s) => {
+        const colorStyle = s.textColor && s.textColor !== "#21242e"
+            ? `color:${esc(s.textColor)};border:none;`
+            : "";
+        return `<div class="feature-card" style="background:${esc(s.backgroundHex)};${colorStyle}">
   <h4${s.textColor && s.textColor !== "#21242e" ? ` style="color:${esc(s.textColor)};"` : ""}>${esc(s.title)}</h4>
   <p${s.textColor && s.textColor !== "#21242e" ? ` style="color:${esc(s.textColor)};opacity:0.7;"` : ""}>${esc(s.description)}</p>
 </div>`;
     })
-    .join("\n");
-  return `<section>
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">04 — Components</span>
   <h2 class="section-heading">Cards &amp; Surfaces</h2>
   <div class="card-grid">${cards}</div>
 </section>`;
 }
-
-function formsSection(forms: DesignSystemData["forms"]): string {
-  const cards = forms
-    .map(
-      (f) => `<div class="demo-card">
+function formsSection(forms) {
+    const cards = forms
+        .map((f) => `<div class="demo-card">
   <span class="label">${esc(f.label)}</span>
   ${f.elementHtml}
-</div>`
-    )
-    .join("\n");
-  return `<section>
+</div>`)
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">05 — Components</span>
   <h2 class="section-heading">Form Elements</h2>
   <div class="form-grid">${cards}</div>
 </section>`;
 }
-
-function spacingSection(spacing: DesignSystemData["spacing"]): string {
-  const boxes = spacing.tokens
-    .map(
-      (t) => `<div>
+function spacingSection(spacing) {
+    const boxes = spacing.tokens
+        .map((t) => `<div>
   <div class="spacing-box" style="width:${t.widthPx}px;"></div>
   <div class="spacing-label">${esc(t.name)}<br>${esc(t.value)}</div>
-</div>`
-    )
-    .join("\n");
-  return `<section>
+</div>`)
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">06 — Foundations</span>
   <h2 class="section-heading">Spacing Scale</h2>
   <p style="color:#60619c;margin:-16px 0 28px;">${esc(spacing.note)}</p>
   <div class="spacing-row">${boxes}</div>
 </section>`;
 }
-
-function radiusSection(radius: DesignSystemData["radius"]): string {
-  const boxes = radius.tokens
-    .map(
-      (t) => `<div>
+function radiusSection(radius) {
+    const boxes = radius.tokens
+        .map((t) => `<div>
   <div class="radius-box" style="border-radius:${esc(t.value)};">${esc(t.value)}</div>
   <div class="radius-label">${esc(t.name)}</div>
-</div>`
-    )
-    .join("\n");
-  return `<section>
+</div>`)
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">07 — Foundations</span>
   <h2 class="section-heading">Border Radius</h2>
   <p style="color:#60619c;margin:-16px 0 28px;">${esc(radius.note)}</p>
   <div class="radius-row">${boxes}</div>
 </section>`;
 }
-
-function elevationSection(elevation: DesignSystemData["elevation"]): string {
-  const cards = elevation
-    .map((e, i) => {
-      const styleStr = Object.entries(e.styles)
-        .map(([k, v]) => `${k}:${v}`)
-        .join(";");
-      return `<div class="elev-card elev-${i + 1}" style="${esc(styleStr)}">${esc(e.description)}</div>`;
+function elevationSection(elevation) {
+    const cards = elevation
+        .map((e, i) => {
+        const styleStr = Object.entries(e.styles)
+            .map(([k, v]) => `${k}:${v}`)
+            .join(";");
+        return `<div class="elev-card elev-${i + 1}" style="${esc(styleStr)}">${esc(e.description)}</div>`;
     })
-    .join("\n");
-  return `<section>
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">08 — Foundations</span>
   <h2 class="section-heading">Elevation &amp; Depth</h2>
   <div class="elevation-grid">${cards}</div>
 </section>`;
 }
-
-function responsiveSection(responsive: DesignSystemData["responsive"]): string {
-  const rows = responsive.breakpoints
-    .map(
-      (b) => `<tr>
+function responsiveSection(responsive) {
+    const rows = responsive.breakpoints
+        .map((b) => `<tr>
   <td>${esc(b.name)}</td>
   <td>${esc(b.width)}</td>
   <td>${esc(b.changes)}</td>
-</tr>`
-    )
-    .join("\n");
-  return `<section>
+</tr>`)
+        .join("\n");
+    return `<section>
   <span class="section-eyebrow">09 — Responsive</span>
   <h2 class="section-heading">Responsive Behavior</h2>
   <table class="responsive-table">
@@ -183,31 +162,14 @@ function responsiveSection(responsive: DesignSystemData["responsive"]): string {
   <p style="color:#60619c;margin-top:24px;font-size:14px;">${esc(responsive.touchNote)}</p>
 </section>`;
 }
-
 // ---------------------------------------------------------------------------
 // Main render function
 // ---------------------------------------------------------------------------
-export function renderDesignHtml(data: DesignSystemData): string {
-  const {
-    meta,
-    nav,
-    hero,
-    palette,
-    typography,
-    buttons,
-    surfaces,
-    forms,
-    spacing,
-    radius,
-    elevation,
-    responsive,
-    cssVariables,
-  } = data;
-
-  const navLinks = nav.links.map((l) => `<li>${esc(l)}</li>`).join("");
-  const varsBlock = cssVarsBlock(cssVariables);
-
-  return `<!DOCTYPE html>
+function renderDesignHtml(data) {
+    const { meta, nav, hero, palette, typography, buttons, surfaces, forms, spacing, radius, elevation, responsive, cssVariables, } = data;
+    const navLinks = nav.links.map((l) => `<li>${esc(l)}</li>`).join("");
+    const varsBlock = cssVarsBlock(cssVariables);
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">

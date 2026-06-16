@@ -99,6 +99,10 @@ interface SiteTheme {
   heroText: string;
   heroTextMuted: string;
   headingColor: string;
+  inkColor: string;
+  primaryOnPage: string;
+  primaryOnHero: string;
+  primaryOnNav: string;
   mutedColor: string;
   btnRadius: string | null;   // null = not detected in scrape — never claim a value
   inputRadius: string | null; // null = not detected in scrape — never claim a value
@@ -289,13 +293,29 @@ function deriveSiteTheme(analysis: SemanticAnalysis): SiteTheme {
     ? "rgba(240,240,240,0.65)"
     : "rgba(0,0,0,0.65)";
 
-  // Heading: darkest text-role color observable on page canvas
-  const headingColor = (() => {
+  // Ink: darkest text-role color observable on the page — only ever placed on
+  // guaranteed-light boxes (swatches, demo cards), so it must stay dark even
+  // when the page itself is dark-themed (pageText would be light there).
+  const inkColor = (() => {
     const dark = analysis.palette.allObserved
       .filter((c) => relativeLuminance(c.hex) < 0.25 && c.roles.includes("text"))
       .sort((a, b) => b.frequency - a.frequency)[0];
-    return dark?.hex ?? pageText;
+    return dark?.hex ?? "#1a1a1a";
   })();
+
+  // Heading: same ink color, but verified against the page background —
+  // sections have no background of their own, so they show through to
+  // pageBg. On dark-themed sites the ink color (intentionally dark) would
+  // be invisible there, so fall back to an auto-contrast color instead.
+  const headingColor = readableOn(pageBg, inkColor);
+
+  // primaryHex is reused as a decorative text/fill accent in several spots
+  // that sit directly on pageBg/heroBg/navBg with no card wrapper behind
+  // them — verify it actually contrasts with each surface rather than
+  // assuming a light-on-dark layout.
+  const primaryOnPage = readableOn(pageBg, primaryHex);
+  const primaryOnHero = readableOn(heroBg, primaryHex);
+  const primaryOnNav = readableOn(navBg, primaryHex);
 
   const mutedColor = "#8d8d8d";
   const btnRadius = vars["--buttons-radius"] || analysis.buttons.radius || null;
@@ -307,7 +327,8 @@ function deriveSiteTheme(analysis: SemanticAnalysis): SiteTheme {
     primaryHex, primaryFg, pageBg, pageText,
     navBg, navText, navLinkColor,
     heroBg, heroText, heroTextMuted,
-    headingColor, mutedColor,
+    headingColor, inkColor, primaryOnPage, primaryOnHero, primaryOnNav,
+    mutedColor,
     btnRadius, inputRadius, bodyFamily, headingFamily,
   };
 }
@@ -398,7 +419,8 @@ function sampleForRole(role: string): string {
 
 function buildCss(t: SiteTheme): string {
   const { primaryHex, primaryFg, pageBg, pageText, navBg, navText, navLinkColor,
-    heroBg, heroText, heroTextMuted, headingColor, mutedColor, bodyFamily } = t;
+    heroBg, heroText, heroTextMuted, headingColor, inkColor,
+    primaryOnPage, primaryOnHero, primaryOnNav, mutedColor, bodyFamily } = t;
   // Undetected radius renders square — absence of a claim, not an invented token
   const btnRadius = t.btnRadius ?? "0";
   const inputRadius = t.inputRadius ?? "0";
@@ -415,16 +437,16 @@ body{margin:0;font-family:${bodyFamilyCss},'Helvetica Neue',Arial,sans-serif;bac
 .nav-links a:hover{color:${navText};}
 .hero{padding:96px 48px;background:${heroBg};max-width:100%;}
 .hero-inner{max-width:1344px;margin:0 auto;}
-.hero-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:${primaryHex};margin:0 0 20px;display:block;}
+.hero-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:${primaryOnHero};margin:0 0 20px;display:block;}
 .hero h1{font-size:64px;font-weight:700;line-height:1.0;color:${heroText};margin:0 0 20px;letter-spacing:-1.5px;}
-.hero h1 em{font-style:normal;color:${primaryHex};}
+.hero h1 em{font-style:normal;color:${primaryOnHero};}
 .hero p{font-size:18px;color:${heroTextMuted};max-width:640px;margin:0 0 40px;line-height:1.6;}
 .hero-meta{display:flex;gap:32px;flex-wrap:wrap;}
 .hero-stat{display:flex;flex-direction:column;gap:2px;}
 .hero-stat strong{font-size:22px;font-weight:700;color:${heroText};}
 .hero-stat span{font-size:12px;color:${heroTextMuted};text-transform:uppercase;letter-spacing:1px;}
 section{padding:80px 48px;max-width:1344px;margin:0 auto;}
-.section-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:${primaryHex};margin-bottom:6px;display:block;}
+.section-eyebrow{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:${primaryOnPage};margin-bottom:6px;display:block;}
 .section-heading{font-size:34px;font-weight:700;letter-spacing:-0.5px;margin:0 0 8px;color:${headingColor};}
 .section-sub{font-size:15px;color:${mutedColor};margin:0 0 36px;line-height:1.5;}
 .divider{border:none;border-top:1px solid rgba(0,0,0,0.09);margin:0;}
@@ -432,7 +454,7 @@ section{padding:80px 48px;max-width:1344px;margin:0 auto;}
 .swatch{border:1px solid rgba(0,0,0,0.09);border-radius:10px;overflow:hidden;background:#ffffff;}
 .swatch-fill{height:88px;}
 .swatch-meta{padding:14px;}
-.swatch-name{font-weight:700;font-size:13px;margin:0 0 2px;color:${headingColor};}
+.swatch-name{font-weight:700;font-size:13px;margin:0 0 2px;color:${inkColor};}
 .swatch-hex{font-family:'Courier New',monospace;font-size:12px;color:${mutedColor};margin:0 0 4px;}
 .swatch-role{font-size:11px;color:${mutedColor};margin:0;line-height:1.5;}
 .swatch-contrast{font-size:10px;font-weight:600;margin-top:6px;padding:2px 6px;border-radius:20px;display:inline-block;}
@@ -469,11 +491,11 @@ section{padding:80px 48px;max-width:1344px;margin:0 auto;}
 .form-field textarea{min-height:90px;}
 .spacing-row{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-end;}
 .spacing-item{display:flex;flex-direction:column;align-items:center;gap:8px;}
-.spacing-bar{background:${primaryHex};border-radius:2px;height:32px;}
+.spacing-bar{background:${primaryOnPage};border-radius:2px;height:32px;}
 .spacing-label{font-family:'Courier New',monospace;font-size:10px;color:${mutedColor};text-align:center;line-height:1.5;}
 .radius-row{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;}
 .radius-item{display:flex;flex-direction:column;align-items:center;gap:10px;}
-.radius-box{width:80px;height:80px;background:#ffffff;border:2px solid ${headingColor};display:flex;align-items:center;justify-content:center;}
+.radius-box{width:80px;height:80px;background:#ffffff;border:2px solid ${inkColor};display:flex;align-items:center;justify-content:center;}
 .radius-label{font-family:'Courier New',monospace;font-size:10px;color:${mutedColor};text-align:center;line-height:1.6;}
 .elevation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;}
 .elev-card{background:#ffffff;padding:24px;font-size:13px;color:#555;line-height:1.6;}
@@ -482,20 +504,20 @@ section{padding:80px 48px;max-width:1344px;margin:0 auto;}
 .motion-row table{width:100%;border-collapse:collapse;font-size:14px;}
 .motion-row table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:${mutedColor};padding:10px 16px;text-align:left;border-bottom:2px solid #e0e0e0;background:#f9f9f9;}
 .motion-row table td{padding:14px 16px;border-bottom:1px solid #e8e8e8;font-size:13px;color:${pageText};}
-.motion-row table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:${primaryHex};}
+.motion-row table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:${primaryOnPage};}
 .responsive-table{width:100%;border-collapse:collapse;font-size:14px;}
 .responsive-table th,.responsive-table td{text-align:left;padding:12px 16px;border-bottom:1px solid #e0e0e0;}
 .responsive-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:${mutedColor};background:#f9f9f9;}
 .responsive-table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:${headingColor};}
 .device-ladder{display:flex;gap:16px;align-items:flex-end;margin-top:32px;flex-wrap:wrap;}
-.device-box{background:#ffffff;border:1.5px solid ${headingColor};display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:8px;font-size:10px;font-family:'Courier New',monospace;color:${mutedColor};gap:4px;}
+.device-box{background:#ffffff;border:1.5px solid ${inkColor};display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:8px;font-size:10px;font-family:'Courier New',monospace;color:${mutedColor};gap:4px;}
 .marquee-demo{background:${heroBg};padding:16px 0;overflow:hidden;}
 .marquee-track{display:flex;white-space:nowrap;animation:marquee 18s linear infinite;}
-.marquee-item{font-size:13px;font-weight:700;color:${primaryHex};padding:0 28px;letter-spacing:0.5px;}
+.marquee-item{font-size:13px;font-weight:700;color:${primaryOnHero};padding:0 28px;letter-spacing:0.5px;}
 @keyframes marquee{0%{transform:translateX(0);}100%{transform:translateX(-50%);}}
 .works-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;}
 .work-card{overflow:hidden;background:${heroBg};color:${heroText};border-radius:0;}
-.work-card-img{height:120px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;letter-spacing:1px;color:${primaryHex};background:${navBg};}
+.work-card-img{height:120px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;letter-spacing:1px;color:${primaryOnNav};background:${navBg};}
 .work-card-body{padding:18px 20px;}
 .work-card-title{font-size:16px;font-weight:700;margin:0 0 4px;color:${heroText};}
 .work-card-desc{font-size:12px;color:${heroTextMuted};margin:0;word-break:break-all;}
@@ -583,7 +605,7 @@ function renderBrandAssetsSection(content: SiteContent, theme: SiteTheme, siteTi
 
   if (content.socialLinks.length) {
     const links = content.socialLinks.map((s) =>
-      `<a href="${s.href}" style="font-size:13px;color:${theme.headingColor};font-weight:600;text-decoration:none;border:1.5px solid ${theme.headingColor};padding:8px 14px;">${s.label} ↗</a>`,
+      `<a href="${s.href}" style="font-size:13px;color:${theme.inkColor};font-weight:600;text-decoration:none;border:1.5px solid ${theme.inkColor};padding:8px 14px;">${s.label} ↗</a>`,
     ).join("\n      ");
     cards.push(`<div class="demo-card">
   <span class="demo-label">Social links found on site</span>
@@ -975,8 +997,8 @@ function renderElevationSection(shadows: string[], cssVars: Record<string, strin
 
   const cards = isFlat
     ? [
-        `<div class="elev-card" style="border:none;background:#f0f0f0;"><strong style="color:${theme.headingColor};">Level 0 — Page Canvas</strong><p style="margin:8px 0 0;">bg ${theme.pageBg} — the outermost layer. Everything sits on top of this.</p></div>`,
-        `<div class="elev-card" style="border:1px solid rgba(0,0,0,0.09);"><strong style="color:${theme.headingColor};">Level 1 — Card Surface</strong><p style="margin:8px 0 0;">bg #ffffff with 1px border. No shadow — white lift creates elevation via contrast.</p></div>`,
+        `<div class="elev-card" style="border:none;background:#f0f0f0;"><strong style="color:${theme.inkColor};">Level 0 — Page Canvas</strong><p style="margin:8px 0 0;">bg ${theme.pageBg} — the outermost layer. Everything sits on top of this.</p></div>`,
+        `<div class="elev-card" style="border:1px solid rgba(0,0,0,0.09);"><strong style="color:${theme.inkColor};">Level 1 — Card Surface</strong><p style="margin:8px 0 0;">bg #ffffff with 1px border. No shadow — white lift creates elevation via contrast.</p></div>`,
         `<div class="elev-card" style="background:${theme.heroBg};color:${theme.heroText};border:none;"><strong style="color:${theme.heroText};">Dark Section</strong><p style="margin:8px 0 0;opacity:0.65;">bg ${theme.heroBg} — depth through color contrast, no shadows.</p></div>`,
       ]
     : realShadows.slice(0, 4).map(({ label, shadow }) =>
@@ -1166,7 +1188,7 @@ export function renderDesignSystemHtml(
   const footerMeta = [
     `Font: ${bodyFamilyName}`,
     content.copyright ?? "",
-    "Generated by getdesign.md",
+    "Generated by Designprobe",
   ].filter(Boolean).join(" · ");
 
   return `<!DOCTYPE html>
@@ -1230,7 +1252,7 @@ ${renderResponsiveSection(analysis.url, breakpoints, theme)}
 ${(content.logoSvg || content.logoUrl || content.brandAssets.length || content.socialLinks.length) ? `<hr class="divider">\n${renderBrandAssetsSection(content, theme, siteTitle)}` : ""}
 
 <footer class="footer">
-  <span>Design system analysis of <a href="${analysis.url}" style="color:${theme.primaryHex};text-decoration:none;font-weight:600;">${siteUrl}</a> — all values extracted from live site</span>
+  <span>Design system analysis of <a href="${analysis.url}" style="color:${theme.primaryOnPage};text-decoration:none;font-weight:600;">${siteUrl}</a> — all values extracted from live site</span>
   <span>${footerMeta}</span>
 </footer>
 
@@ -1492,7 +1514,7 @@ export function renderDesignMd(
   lines.push("```");
   lines.push("");
   lines.push(`---`);
-  lines.push(`*Generated by getdesign.md — all values from live scrape of ${siteUrl}*`);
+  lines.push(`*Generated by Designprobe — all values from live scrape of ${siteUrl}*`);
 
   return lines.join("\n");
 }

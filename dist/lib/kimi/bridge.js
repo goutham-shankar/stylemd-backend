@@ -1,7 +1,7 @@
 "use strict";
 /**
  * Kimi Integration Bridge
- * Adapts Kimi API to Claude SDK interface for gradual migration
+ * Adapts Kimi API to standard interface
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.queryWithKimiBridge = queryWithKimiBridge;
@@ -10,7 +10,6 @@ const curation_1 = require("../../lib/kimi/curation");
 const styleguide_1 = require("../../lib/kimi/styleguide");
 /**
  * Query using Kimi AI with hook callbacks
- * Compatible with existing Claude SDK interface
  */
 async function queryWithKimiBridge(options) {
     const { workspaceDir, runtime, systemPrompt, prompt, signal, stage, onTokenUsage, } = options;
@@ -49,10 +48,10 @@ async function queryWithKimiBridge(options) {
 function getKimiOnlyConfig() {
     return {
         provider: "kimi",
-        model: "kimi-k2-thinking",
+        model: "kimi-k2.5",
         env: {
             MOONSHOT_API_KEY: process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || "",
         },
-        queryModel: "kimi-k2-thinking",
+        queryModel: "kimi-k2.5",
     };
 }

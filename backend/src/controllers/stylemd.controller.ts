@@ -11,10 +11,21 @@ import { pageUrlVariantsForLookup, canonicalPageUrl } from "@/lib/services/pageU
 import { resolveStyleMdForRunDoc } from "@/lib/services/resolveStyleMdFromStores";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
+import { r2PublicUrl, fetchR2Text } from "@/lib/queue/r2";
+import { finalizeStyleMdRun } from "../services/finalizeStyleMdRun";
 import type { KimiCostEstimate, KimiTokenUsage } from "@/lib/services/kimiUsage";
 
-import { isValidScrapedRecord } from "../utils/validation";
 import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
+
+/** R2 keys stored on a run/scrape doc (storage v2 — artifacts live in R2). */
+interface R2Keys {
+  slug?: string | null;
+  previewHtml?: string | null;
+  designMd?: string | null;
+  screenshot?: string | null;
+  semanticStructure?: string | null;
+  designTokens?: string | null;
+}
 
 interface StyleMdRunDoc {
   url: string;
@@ -31,6 +42,38 @@ interface StyleMdRunDoc {
   retryCount?: number;
   contentText?: string;
   rawHtml?: string;
+}
+
+type ScrapedDocR2 = StyleMdRunDoc & { r2?: R2Keys | null };
+
+/**
+ * Build the cache-hit response payload for a completed run. styleMd text lives
+ * in R2 (design.md) under storage v2, so we fetch it from there; preview/
+ * screenshot are returned as resolved public R2 URLs.
+ */
+async function buildCachedPayload(
+  existing: StyleMdRunDoc,
+  r2: R2Keys | null,
+): Promise<Record<string, unknown>> {
+  const styleMd = (await fetchR2Text(r2?.designMd)) ?? existing.styleMd ?? "";
+  return {
+    url: existing.url,
+    slug: existing.slug,
+    runId: existing.runId,
+    styleMd,
+    images: existing.images ?? [],
+    r2Urls: {
+      previewHtml: r2PublicUrl(r2?.previewHtml),
+      designMd: r2PublicUrl(r2?.designMd),
+      screenshot: r2PublicUrl(r2?.screenshot),
+    },
+    tokenUsage: existing.tokenUsage ?? null,
+    costEstimate: existing.costEstimate ?? null,
+    provider: existing.provider,
+    model: existing.model,
+    status: existing.status,
+    createdAt: (existing.createdAt as Date)?.toISOString?.() ?? String(existing.createdAt),
+  };
 }
 
 const requestSchema = z.object({
@@ -59,68 +102,34 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     const canonUrl = canonicalPageUrl(url);
     const slug = slugFromUrl(canonUrl);
 
-    // --- Cache hit (find LATEST run for this slug) ---
-    const existing = await StyleMdRun.findOne({ slug })
+    // --- Cache hit (find LATEST run for this URL) ---
+    // Look up by canonical URL (+ www variants), NOT slug: two slug schemes
+    // coexist in the codebase (slugFromUrl strips www/.com, urlToSlug keeps the
+    // hostname) and finalize overwrites the doc's slug with the urlToSlug form,
+    // so a slug query would miss. `url` is written identically by every path.
+    const urlVariants = pageUrlVariantsForLookup(canonUrl);
+    const existing = await StyleMdRun.findOne({ url: { $in: urlVariants } })
       .sort({ createdAt: -1 })
       .lean<StyleMdRunDoc>();
-    
-    // 🟠 FIX: StyleMdRun does not have contentText/rawHtml, so isValidScrapedRecord fails.
-    // We check for status="completed" and non-empty styleMd.
-    const isValid = existing && 
-      existing.status === "completed" && 
-      existing.styleMd?.trim() && 
-      existing.images?.length;
+
+    // Storage v2: artifacts live in R2, NOT inline on the Mongo doc. A run is a
+    // valid cache hit when it completed and produced R2 artifacts (preview/md).
+    // The old check looked at existing.styleMd/images — fields v2 never writes —
+    // so every lookup was a miss and re-scraped from scratch.
+    const r2 = (existing as ScrapedDocR2 | undefined)?.r2 ?? null;
+    const isValid = Boolean(
+      existing &&
+        (existing.status === "completed" || existing.status === "completed_with_warnings") &&
+        (r2?.previewHtml || r2?.designMd),
+    );
 
     console.log(`[STYLEMD] Checking cache for slug=${slug}. Found: ${existing ? "YES" : "NO"}, Valid: ${isValid ? "YES" : "NO"}, Force: ${force}`);
 
-    if (!force && isValid) {
-      console.log(`[STYLEMD] cache-hit (valid) slug=${slug}`);
-      res.json({
-        ok: true,
-        data: {
-          url: existing.url,
-          slug: existing.slug,
-          runId: existing.runId,
-          styleMd: existing.styleMd,
-          images: existing.images ?? [],
-          tokenUsage: existing.tokenUsage ?? null,
-          costEstimate: existing.costEstimate ?? null,
-          provider: existing.provider,
-          model: existing.model,
-          status: existing.status,
-          createdAt: (existing.createdAt as Date)?.toISOString?.() ?? String(existing.createdAt),
-        },
-        cached: true,
-      });
+    if (!force && isValid && existing) {
+      console.log(`[STYLEMD] cache-hit (valid) slug=${slug} — returning stored R2 artifacts, no re-scrape`);
+      const cachedPayload = await buildCachedPayload(existing, r2);
+      res.json({ ok: true, data: cachedPayload, cached: true });
       return;
-    }
-
-    if (!force && existing && !isValid && existing.status !== "running") {
-      const retries = existing.retryCount || 0;
-      if (retries >= 2) {
-        console.warn(`[STYLEMD] max retries reached for ${slug}, returning last known data`);
-        res.json({
-          ok: true,
-          data: {
-            url: existing.url,
-            slug: existing.slug,
-            runId: existing.runId,
-            styleMd: existing.styleMd,
-            images: existing.images ?? [],
-            tokenUsage: existing.tokenUsage ?? null,
-            costEstimate: existing.costEstimate ?? null,
-            provider: existing.provider,
-            model: existing.model,
-            status: existing.status,
-            createdAt: (existing.createdAt as Date)?.toISOString?.() ?? String(existing.createdAt),
-          },
-          cached: true,
-        });
-        return;
-      }
-      
-      console.log(`[STYLEMD] invalid cache detected, re-scraping (attempt ${retries + 1}): ${slug}`);
-      await safeWrite(() => StyleMdRun.updateOne({ runId: existing.runId }, { $inc: { retryCount: 1 } }));
     }
 
     if (existing?.status === "running") {
@@ -176,17 +185,34 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     });
 
     // Start pipeline without awaiting
+    const startedAt = Date.now();
     void (async () => {
       try {
         const result = await runSimplifiedStyleMdPipeline(canonUrl, provider, runIdValue);
-        
+
+        // Finalize: render → upload artifacts to R2 → patch the run doc with R2
+        // keys → clean scratch dir. Without this, /api/stylemd runs never get
+        // R2 keys persisted, so they're neither retrievable nor cache-hittable.
+        await finalizeStyleMdRun({
+          runId: result.runId,
+          url: canonUrl,
+          durationMs: Date.now() - startedAt,
+          screenshotDataUrl: result.screenshot,
+        });
+
         // Reset retry count on success
         await safeWrite(() => StyleMdRun.updateOne({ runId: result.runId }, { $set: { retryCount: 0 } }));
-        
+
         runIdLog(result.runId, `[DEBUG] Pipeline completed successfully. styleMdLength=${result.styleMd?.length ?? 0}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[runStyleMd] Pipeline background error for ${runIdValue}:`, message);
+        await safeWrite(() =>
+          StyleMdRun.updateOne(
+            { runId: runIdValue },
+            { $set: { status: "failed", error: message, updatedAt: new Date() } },
+          ),
+        ).catch(() => undefined);
       }
     })();
   } catch (err) {
@@ -251,11 +277,14 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const styleMd = await resolveStyleMdForRunDoc(doc);
-    if (doc.styleMd) {
-      console.log(`[CANONICAL_ARTIFACT_FOUND] Resolved styleMd for ${slug}. Length: ${styleMd.length}.`);
+    // Storage v2: design.md lives in R2. Prefer it; fall back to the legacy
+    // inline/contentText resolver for pre-migration runs.
+    const r2 = (doc as ScrapedDocR2).r2 ?? null;
+    const styleMd = (await fetchR2Text(r2?.designMd)) || (await resolveStyleMdForRunDoc(doc));
+    if (r2?.designMd && styleMd) {
+      console.log(`[CANONICAL_ARTIFACT_FOUND] Resolved styleMd from R2 for ${slug}. Length: ${styleMd.length}.`);
     } else {
-      console.log(`[FALLBACK_TRIGGERED] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback: true)`);
+      console.log(`[FALLBACK_TRIGGERED] Resolved styleMd for ${slug}. Length: ${styleMd.length}. (Source was fallback)`);
     }
 
     res.json({
@@ -265,6 +294,11 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
         slug: doc.slug,
         runId: doc.runId,
         styleMd,
+        r2Urls: {
+          previewHtml: r2PublicUrl(r2?.previewHtml),
+          designMd: r2PublicUrl(r2?.designMd),
+          screenshot: r2PublicUrl(r2?.screenshot),
+        },
         designTokens: (doc as any).designTokens ?? null,
         images: doc.images ?? [],
         tokenUsage: doc.tokenUsage ?? null,
@@ -274,7 +308,7 @@ export async function getBySlug(req: Request, res: Response): Promise<void> {
         h1: (doc as any).h1,
         canonical: (doc as any).canonical,
         brandAssets: (doc as any).brandAssets,
-        screenshot: (doc as any).screenshot,
+        screenshot: r2PublicUrl(r2?.screenshot) ?? (doc as any).screenshot,
         provider: doc.provider,
         model: doc.model,
         status: doc.status,

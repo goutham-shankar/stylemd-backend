@@ -195,14 +195,12 @@ function toRunRelative(runId, absolutePath) {
 }
 async function waitForSettledPage(page, signal) {
     (0, helpers_1.assertNotAborted)(signal);
-    await page.waitForLoadState("domcontentloaded", { timeout: 30000 }).catch(() => undefined);
-    await page.waitForLoadState("load", { timeout: 30000 }).catch(() => undefined);
-    await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => undefined);
+    await page.waitForLoadState("domcontentloaded", { timeout: 20000 });
+    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => undefined);
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => undefined);
     await page.waitForTimeout(400);
     (0, helpers_1.assertNotAborted)(signal);
     await page.evaluate(async () => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const waitForFonts = async (timeoutMs) => {
             const fontSet = document.fonts;
@@ -290,8 +288,6 @@ async function waitForSettledPage(page, signal) {
 async function runOverlayHygiene(page, signal) {
     (0, helpers_1.assertNotAborted)(signal);
     await page.evaluate(({ hideAttr, styleId, guardKey }) => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         if (!document.getElementById(styleId)) {
             const style = document.createElement("style");
             style.id = styleId;
@@ -507,8 +503,6 @@ async function runOverlayHygiene(page, signal) {
 async function suppressStickyChromeForComponentScreenshot(page, candidateId, signal) {
     (0, helpers_1.assertNotAborted)(signal);
     await page.evaluate(({ candidateId, hideAttr, styleId }) => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         if (!document.getElementById(styleId)) {
             const style = document.createElement("style");
             style.id = styleId;
@@ -692,89 +686,14 @@ async function runCaptureStage(input) {
     await runOverlayHygiene(page, signal);
     (0, helpers_1.assertNotAborted)(signal);
     const viewport = page.viewportSize() ?? { width: 1366, height: 900 };
-    // Remove overflow/height restrictions that prevent full-page capture.
-    // Covers three patterns:
-    //   1. html/body constrained via stylesheet (overflow:hidden, height:100vh)
-    //   2. SPA root containers (e.g. #app, #root) with height:100vh + overflow-y:scroll
-    //   3. Any other near-root scroll container that hides content below the fold
-    const FULL_PAGE_STYLE_ID = "__stylemd_full_page_capture__";
-    const FULL_PAGE_UNLOCK_ATTR = "data-stylemd-unlocked";
-    await page.evaluate(({ styleId, unlockAttr }) => {
-        // Stylesheet-level fix for html/body.
-        if (!document.getElementById(styleId)) {
-            const style = document.createElement("style");
-            style.id = styleId;
-            style.textContent =
-                "html, body { overflow: visible !important; height: auto !important; max-height: none !important; }";
-            document.head.appendChild(style);
-        }
-        // Remove inline overflow lock sometimes added by JS modal/scroll libraries.
-        for (const el of [document.documentElement, document.body]) {
-            el.style.removeProperty("overflow");
-            el.style.removeProperty("overflow-y");
-            el.style.removeProperty("height");
-            el.style.removeProperty("max-height");
-        }
-        // Unroll near-root scroll containers (SPAs like Next.js / React that wrap
-        // the whole page in a height-constrained div with overflow scroll/auto).
-        const candidates = Array.from(document.body?.children ?? []);
-        // Also check one level deeper to catch patterns like body > #__next > main.
-        const secondLevel = [];
-        for (const c of candidates) {
-            for (const child of Array.from(c.children)) {
-                secondLevel.push(child);
-            }
-        }
-        for (const el of [...candidates, ...secondLevel]) {
-            if (el.getAttribute(unlockAttr))
-                continue;
-            const computed = window.getComputedStyle(el);
-            const overflowY = computed.overflowY;
-            const isScrollContainer = overflowY === "scroll" || overflowY === "auto";
-            const hasHiddenContent = el.scrollHeight > el.clientHeight + 50;
-            if (isScrollContainer && hasHiddenContent) {
-                // Save originals so we can restore after capture.
-                el.setAttribute(unlockAttr, "1");
-                el.dataset.stylemdOrigOverflow = el.style.overflowY;
-                el.dataset.stylemdOrigHeight = el.style.height;
-                el.dataset.stylemdOrigMaxHeight = el.style.maxHeight;
-                el.style.setProperty("overflow-y", "visible", "important");
-                el.style.setProperty("height", "auto", "important");
-                el.style.setProperty("max-height", "none", "important");
-            }
-        }
-    }, { styleId: FULL_PAGE_STYLE_ID, unlockAttr: FULL_PAGE_UNLOCK_ATTR });
-    await page.waitForTimeout(300);
     const documentHeight = await page.evaluate(() => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         return Math.max(document.body?.scrollHeight ?? 0, document.documentElement?.scrollHeight ?? 0, document.body?.offsetHeight ?? 0, document.documentElement?.offsetHeight ?? 0);
     });
-    // Resize the viewport to the full document height so content that uses
-    // viewport-relative units (height:100vh) renders correctly everywhere.
-    const fullPageHeight = Math.max(documentHeight, viewport.height);
-    const cappedHeight = Math.min(fullPageHeight, 30000);
-    await page.setViewportSize({ width: viewport.width, height: cappedHeight });
-    await page.waitForTimeout(250);
     const screenshot = await page.screenshot({
         fullPage: true,
         type: "png",
         animations: "disabled",
     });
-    // Restore original viewport and clean up all injected changes.
-    await page.setViewportSize(viewport);
-    await page.evaluate(({ styleId, unlockAttr }) => {
-        document.getElementById(styleId)?.remove();
-        for (const el of Array.from(document.querySelectorAll(`[${unlockAttr}]`))) {
-            el.removeAttribute(unlockAttr);
-            el.style.overflowY = el.dataset.stylemdOrigOverflow ?? "";
-            el.style.height = el.dataset.stylemdOrigHeight ?? "";
-            el.style.maxHeight = el.dataset.stylemdOrigMaxHeight ?? "";
-            delete el.dataset.stylemdOrigOverflow;
-            delete el.dataset.stylemdOrigHeight;
-            delete el.dataset.stylemdOrigMaxHeight;
-        }
-    }, { styleId: FULL_PAGE_STYLE_ID, unlockAttr: FULL_PAGE_UNLOCK_ATTR });
     const downsampledScreenshot = await downsampleScreenshot(screenshot);
     const screenshotArtifact = await (0, artifacts_1.writeStyleMdImage)(runId, "full_screenshot.png", downsampledScreenshot);
     return {
@@ -1132,8 +1051,6 @@ async function collectPageStyles(input) {
     const { runId, page, signal } = input;
     (0, helpers_1.assertNotAborted)(signal);
     const stylesMeta = await page.evaluate(() => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         const inlineStyles = Array.from(document.querySelectorAll("style")).map((node, index) => ({
             id: `inline_${index + 1}`,
             text: node.textContent ?? "",
@@ -1267,8 +1184,6 @@ async function discoverCandidates(input) {
     const { page, widthThreshold, minHeightPx, signal } = input;
     (0, helpers_1.assertNotAborted)(signal);
     const candidates = await page.evaluate(({ tags, widthThresholdPct, minHeight }) => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         function cssEscape(value) {
             if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
                 return CSS.escape(value);
@@ -1351,8 +1266,6 @@ async function discoverCandidates(input) {
 }
 async function extractComponentPayload(page, candidateId) {
     return page.evaluate(({ candidateId, styleTreeProperties, agentStyleProperties, pseudoCriticalProperties }) => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         function styleObject(style) {
             const output = {};
             for (let i = 0; i < style.length; i += 1) {
@@ -1664,6 +1577,28 @@ async function runExtractStage(input) {
         candidates,
     });
     artifacts.push(candidatesArtifact);
+    // --- PHASE 1: DETERMINISTIC DESIGN TOKEN EXTRACTION ---
+    const semanticManifest = await analyzeSemanticDesignSystem(page, runId);
+    const semanticArtifact = await (0, artifacts_1.writeStyleMdJson)(runId, "semantic_analysis.json", semanticManifest);
+    artifacts.push(semanticArtifact);
+    (0, helpers_1.runIdLog)(runId, `[PIPELINE] Semantic analysis complete. Scanned ${semanticManifest.metrics.totalElementsScanned} elements in ${semanticManifest.metrics.extractionDurationMs}ms.`);
+    // --- PHASE 4: VISUAL REBALANCING ---
+    const fullScreenshotPath = artifacts.find(a => a.name === "full_screenshot.png")?.path;
+    if (fullScreenshotPath) {
+        try {
+            const visualPalette = await analyzeScreenshotDominantColors(fullScreenshotPath);
+            rebalancePaletteWithVisuals(semanticManifest, visualPalette);
+            (0, helpers_1.runIdLog)(runId, `[PIPELINE] Visual rebalancing complete. Detected atmospheric colors: ${visualPalette.join(", ")}`);
+        }
+        catch (e) {
+            (0, helpers_1.runIdLog)(runId, `[PIPELINE] Visual rebalancing failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+        }
+    }
+    (0, helpers_1.runIdLog)(runId, `[PIPELINE] Final confidence score: ${semanticManifest.metrics.confidenceScore}. Primary colors: ${semanticManifest.palette.primary.join(", ")}`);
+    const semanticStructure = await analyzeSemanticStructure(page, runId, candidates);
+    const structureArtifact = await (0, artifacts_1.writeStyleMdJson)(runId, "semantic_structure.json", semanticStructure);
+    artifacts.push(structureArtifact);
+    (0, helpers_1.runIdLog)(runId, `[PIPELINE] Structural analysis complete. Identified ${semanticStructure.sections.length} semantic sections.`);
     const components = [];
     for (let i = 0; i < candidates.length; i += 1) {
         (0, helpers_1.assertNotAborted)(signal);
@@ -1744,8 +1679,6 @@ async function runExtractStage(input) {
         });
     }
     await page.evaluate(() => {
-        // @ts-ignore
-        const __name = (t, v) => t;
         for (const element of Array.from(document.querySelectorAll("[data-stylemd-candidate-id]"))) {
             element.removeAttribute("data-stylemd-candidate-id");
         }
@@ -1762,6 +1695,10 @@ async function runExtractStage(input) {
             pageStylesPath: pageStylesIndexPath,
             fontsManifestPath,
             fontsLocalCssPath,
+            designTokenManifestPath: semanticArtifact.path,
+            designTokenManifest: semanticManifest,
+            semanticStructurePath: structureArtifact.path,
+            semanticStructure,
             components,
             candidateCount: candidates.length,
         },
@@ -1886,7 +1823,7 @@ async function runCuratedResponsiveHoverEvidenceStage(input) {
         });
         await page.goto(url, {
             waitUntil: "domcontentloaded",
-            timeout: 90000,
+            timeout: 45000,
         });
         await runOverlayHygiene(page, signal);
         const breakpointUnits = [];
@@ -2026,4 +1963,447 @@ async function runCuratedResponsiveHoverEvidenceStage(input) {
         },
         artifacts,
     };
+}
+/**
+ * PHASE 1: Deterministic Design Token Extraction
+ * Scans the full document in the browser to build a semantic Design Token Manifest.
+ */
+async function analyzeSemanticDesignSystem(page, runId) {
+    const startTime = Date.now();
+    const manifest = await page.evaluate(({ runId, url }) => {
+        // @ts-ignore
+        const __name = (t, v) => t;
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 1;
+        const viewportArea = viewportWidth * viewportHeight;
+        // --- HELPERS ---
+        function rgbToHex(rgb, parentBg) {
+            if (!rgb || rgb === "transparent" || rgb === "rgba(0, 0, 0, 0)")
+                return "transparent";
+            const match = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+            if (!match)
+                return rgb;
+            let r = parseInt(match[1]);
+            let g = parseInt(match[2]);
+            let b = parseInt(match[3]);
+            const a = match[4] ? parseFloat(match[4]) : 1;
+            if (a < 1 && parentBg && parentBg.startsWith("#")) {
+                const pr = parseInt(parentBg.slice(1, 3), 16);
+                const pg = parseInt(parentBg.slice(3, 5), 16);
+                const pb = parseInt(parentBg.slice(5, 7), 16);
+                r = Math.round(r * a + pr * (1 - a));
+                g = Math.round(g * a + pg * (1 - a));
+                b = Math.round(b * a + pb * (1 - a));
+            }
+            const rh = r.toString(16).padStart(2, "0");
+            const gh = g.toString(16).padStart(2, "0");
+            const bh = b.toString(16).padStart(2, "0");
+            return `#${rh}${gh}${bh}`;
+        }
+        function getEffectiveBackground(el) {
+            let current = el;
+            let blendedHex = null;
+            while (current) {
+                const style = window.getComputedStyle(current);
+                const bg = style.backgroundColor;
+                if (bg && bg !== "transparent" && bg !== "rgba(0, 0, 0, 0)") {
+                    const match = bg.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+                    const a = match?.[4] ? parseFloat(match[4]) : 1;
+                    if (a === 1)
+                        return rgbToHex(bg);
+                    if (!blendedHex) {
+                        blendedHex = rgbToHex(bg);
+                    }
+                    else {
+                        blendedHex = rgbToHex(bg, blendedHex);
+                    }
+                    if (a > 0.95)
+                        return blendedHex;
+                }
+                current = current.parentElement;
+            }
+            return blendedHex || "#ffffff";
+        }
+        function normalizeUnit(value) {
+            if (!value || value === "none" || value === "0px" || value === "auto")
+                return value;
+            const match = value.match(/^([\d.]+)(px|rem|em|vh|vw|%)$/);
+            if (!match)
+                return value;
+            const num = parseFloat(match[1]);
+            const unit = match[2];
+            if (unit === "px") {
+                if (num < 1)
+                    return "0px";
+                if (num > 2 && num < 6)
+                    return "4px";
+                if (num >= 6 && num < 10)
+                    return "8px";
+                if (num >= 10 && num < 14)
+                    return "12px";
+                if (num >= 14 && num < 18)
+                    return "16px";
+                if (num >= 22 && num < 26)
+                    return "24px";
+                if (num >= 30 && num < 34)
+                    return "32px";
+                return `${Math.round(num)}px`;
+            }
+            return value;
+        }
+        function isVisible(el) {
+            const style = window.getComputedStyle(el);
+            if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity) <= 0.05)
+                return false;
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 2 || rect.height < 2)
+                return false;
+            if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth)
+                return false;
+            return true;
+        }
+        // --- DATA COLLECTION ---
+        const colorStats = new Map();
+        const typographyUsage = new Map();
+        const spacingSet = new Set();
+        const radiiSet = new Set();
+        const shadowsSet = new Set();
+        const gradientsSet = new Set();
+        const surfaces = [];
+        const cssVars = {};
+        try {
+            const sheets = Array.from(document.styleSheets);
+            const rootStyle = window.getComputedStyle(document.documentElement);
+            for (const sheet of sheets) {
+                try {
+                    const rules = Array.from(sheet.cssRules);
+                    for (const rule of rules) {
+                        if (rule instanceof CSSStyleRule && (rule.selectorText.includes(":root") || rule.selectorText.includes("body"))) {
+                            for (let i = 0; i < rule.style.length; i++) {
+                                const prop = rule.style[i];
+                                if (prop.startsWith("--")) {
+                                    const val = rootStyle.getPropertyValue(prop).trim();
+                                    if (val)
+                                        cssVars[prop] = val;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (e) { }
+            }
+        }
+        catch (e) { }
+        const allElements = document.querySelectorAll("*");
+        let totalScanned = 0;
+        allElements.forEach((el, idx) => {
+            if (!(el instanceof HTMLElement))
+                return;
+            totalScanned++;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            const area = rect.width * rect.height;
+            const tag = el.tagName.toLowerCase();
+            if (!isVisible(el))
+                return;
+            const r = normalizeUnit(style.borderRadius);
+            const s = style.boxShadow;
+            if (r && r !== "0px")
+                radiiSet.add(r);
+            if (s && s !== "none")
+                shadowsSet.add(s);
+            if (area > 1000) {
+                const pt = normalizeUnit(style.paddingTop);
+                const mt = normalizeUnit(style.marginTop);
+                if (pt && pt !== "0px")
+                    spacingSet.add(pt);
+                if (mt && mt !== "0px")
+                    spacingSet.add(mt);
+            }
+            const bgImg = style.backgroundImage;
+            if (bgImg && bgImg.includes("gradient"))
+                gradientsSet.add(bgImg);
+            const effectiveBg = getEffectiveBackground(el);
+            const fg = rgbToHex(style.color);
+            const isHeading = /^h[1-6]$/.test(tag);
+            const isButton = tag === "button" || el.closest("button") || el.getAttribute("role") === "button";
+            const isCard = area > 5000 && (style.boxShadow !== "none" || style.borderRadius !== "0px" || effectiveBg !== getEffectiveBackground(el.parentElement || el));
+            const processColor = (hex, role) => {
+                if (hex === "transparent" || !hex.startsWith("#"))
+                    return;
+                let weight = area;
+                if (role === "text" && area < 500)
+                    weight *= 0.1;
+                if (isButton)
+                    weight *= 15;
+                if (isHeading)
+                    weight *= 3;
+                if (tag === "body" || tag === "main")
+                    weight *= 2;
+                let stats = colorStats.get(hex);
+                if (!stats) {
+                    stats = { count: 0, area: 0, roles: new Set(), elements: new Set(), isHeading: false, isButton: false, confidence: "confirmed" };
+                    colorStats.set(hex, stats);
+                }
+                stats.count++;
+                stats.area += weight;
+                stats.roles.add(role);
+                if (isHeading)
+                    stats.isHeading = true;
+                if (isButton)
+                    stats.isButton = true;
+            };
+            processColor(effectiveBg, "background");
+            processColor(fg, "text");
+            if (area > viewportArea * 0.05) {
+                let role = "section_surface";
+                if (tag === "body" || (tag === "div" && idx < 5 && area > viewportArea * 0.8))
+                    role = "page_canvas";
+                else if (tag === "header" || (isHeading && area > viewportArea * 0.2))
+                    role = "hero_surface";
+                else if (isCard)
+                    role = "card_surface";
+                else if (tag === "footer")
+                    role = "footer_surface";
+                surfaces.push({
+                    role,
+                    background: effectiveBg,
+                    text: fg,
+                    areaWeight: area / viewportArea
+                });
+            }
+            const family = style.fontFamily;
+            const size = normalizeUnit(style.fontSize);
+            const weight = style.fontWeight;
+            const lh = normalizeUnit(style.lineHeight);
+            const typeKey = `${family}|${size}|${weight}|${lh}|${fg}`;
+            let tStats = typographyUsage.get(typeKey);
+            if (!tStats) {
+                tStats = { family, size, weight, lineHeight: lh, color: fg, count: 0, tags: new Set() };
+                typographyUsage.set(typeKey, tStats);
+            }
+            tStats.count++;
+            tStats.tags.add(tag);
+        });
+        const sortedColors = [...colorStats.entries()].sort((a, b) => b[1].area - a[1].area);
+        const palette = {
+            primary: [],
+            secondary: [],
+            accent: [],
+            background: [],
+            surface: [],
+            text: [],
+            muted: [],
+            allObserved: sortedColors.map(([hex, s]) => ({
+                hex,
+                areaWeight: s.area / viewportArea,
+                frequency: s.count,
+                roles: [...s.roles],
+                confidence: s.confidence
+            }))
+        };
+        sortedColors.forEach(([hex, s]) => {
+            if (s.isHeading && s.area > viewportArea * 0.01)
+                palette.primary.push(hex);
+            if (s.isButton)
+                palette.accent.push(hex);
+            if (s.roles.has("background") && s.area > viewportArea * 0.15)
+                palette.background.push(hex);
+            if (s.roles.has("background") && s.area <= viewportArea * 0.15 && s.area > viewportArea * 0.02)
+                palette.surface.push(hex);
+            if (s.roles.has("text") && !palette.primary.includes(hex))
+                palette.text.push(hex);
+        });
+        const uniq = (arr) => [...new Set(arr)].slice(0, 5);
+        palette.primary = uniq(palette.primary);
+        palette.accent = uniq(palette.accent);
+        palette.background = uniq(palette.background);
+        palette.text = uniq(palette.text);
+        return {
+            run_id: runId,
+            url,
+            generated_at: new Date().toISOString(),
+            palette,
+            gradients: [...gradientsSet].slice(0, 5),
+            typography: {
+                display: uniq([...typographyUsage.values()].filter(t => [...t.tags].some(tag => /^h[1-3]$/.test(tag))).map(t => t.family)),
+                body: uniq([...typographyUsage.values()].filter(t => [...t.tags].includes("p") || [...t.tags].includes("div")).map(t => t.family)),
+                ui: uniq([...typographyUsage.values()].filter(t => [...t.tags].includes("button") || [...t.tags].includes("span")).map(t => t.family)),
+                scales: [...typographyUsage.values()]
+                    .sort((a, b) => b.count - a.count)
+                    .slice(0, 12)
+                    .map(t => ({
+                    tag: [...t.tags][0],
+                    role: (/^h[1-3]$/.test([...t.tags][0]) ? "display" : ([...t.tags].includes("button") ? "ui" : "body")),
+                    fontSize: t.size,
+                    fontWeight: t.weight,
+                    lineHeight: t.lineHeight,
+                    color: t.color,
+                    usageCount: t.count,
+                })),
+            },
+            spacing: [...spacingSet].sort((a, b) => parseFloat(a) - parseFloat(b)).slice(0, 12),
+            radius: [...radiiSet].slice(0, 8),
+            shadows: [...shadowsSet].slice(0, 6),
+            surfaces: surfaces.slice(0, 10),
+            buttons: {
+                radius: radiiSet.size > 0 ? [...radiiSet][0] : "4px",
+                paddingDensity: "normal",
+                fillType: "solid",
+                variants: []
+            },
+            mood: {
+                confidence: 0.7,
+            },
+            resolvedCssVariables: cssVars,
+            metrics: {
+                totalElementsScanned: totalScanned,
+                extractionDurationMs: 0,
+                confidenceScore: totalScanned > 100 ? 0.95 : 0.6,
+            }
+        };
+    }, { runId, url: page.url() });
+    manifest.metrics.extractionDurationMs = Date.now() - startTime;
+    return manifest;
+}
+/**
+ * Resizes the screenshot to a 5x5 grid and extracts dominant pixel colors to get the visual "atmosphere".
+ */
+async function analyzeScreenshotDominantColors(screenshotPath) {
+    const { data, info } = await (0, sharp_1.default)(screenshotPath)
+        .resize(5, 5, { fit: "fill" })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+    const colors = new Set();
+    for (let i = 0; i < data.length; i += info.channels) {
+        const r = data[i].toString(16).padStart(2, "0");
+        const g = data[i + 1].toString(16).padStart(2, "0");
+        const b = data[i + 2].toString(16).padStart(2, "0");
+        const hex = `#${r}${g}${b}`;
+        colors.add(hex);
+    }
+    return [...colors];
+}
+/**
+ * Merges visual colors into the semantic manifest if they are significant but missing.
+ */
+function rebalancePaletteWithVisuals(manifest, visualColors) {
+    visualColors.forEach(v => {
+        const alreadyPresent = manifest.palette.primary.includes(v) || manifest.palette.background.includes(v);
+        if (!alreadyPresent) {
+            const isNew = !manifest.palette.allObserved.some(o => o.hex === v && o.areaWeight > 0.3);
+            if (isNew) {
+                manifest.palette.background.unshift(v);
+                manifest.palette.allObserved.push({
+                    hex: v,
+                    areaWeight: 0.5,
+                    frequency: 1,
+                    roles: ["background", "visual_atmosphere"],
+                    confidence: "inferred"
+                });
+            }
+        }
+    });
+}
+/**
+ * PHASE 2: Full-Page Semantic Analysis
+ * Identifies sections and classifies them (Navbar, Hero, etc.) to provide structural context.
+ */
+async function analyzeSemanticStructure(page, runId, candidates) {
+    return page.evaluate(({ runId, url, candidates }) => {
+        // @ts-ignore
+        const __name = (t, v) => t;
+        const sections = [];
+        const layoutPatterns = {
+            isStickyHeader: false,
+            hasSidebar: false,
+            isCenterAligned: true,
+        };
+        function rgbToHex(rgb) {
+            if (!rgb || rgb === "transparent" || rgb === "rgba(0, 0, 0, 0)")
+                return "transparent";
+            const match = rgb.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/);
+            if (!match)
+                return rgb;
+            const r = parseInt(match[1]).toString(16).padStart(2, "0");
+            const g = parseInt(match[2]).toString(16).padStart(2, "0");
+            const b = parseInt(match[3]).toString(16).padStart(2, "0");
+            return `#${r}${g}${b}`;
+        }
+        function getRect(el) {
+            const r = el.getBoundingClientRect();
+            return {
+                top: r.top + window.scrollY,
+                left: r.left + window.scrollX,
+                width: r.width,
+                height: r.height,
+                bottom: r.top + r.height + window.scrollY,
+            };
+        }
+        const containers = Array.from(document.querySelectorAll("header, footer, main, nav, section, [role='main'], [role='banner'], [role='contentinfo']"));
+        if (containers.length < 3) {
+            const bodyChildren = Array.from(document.body.children);
+            bodyChildren.forEach(el => {
+                const rect = el.getBoundingClientRect();
+                if (rect.height > 100 && rect.width > window.innerWidth * 0.5) {
+                    containers.push(el);
+                }
+            });
+        }
+        containers.forEach((el, idx) => {
+            if (!(el instanceof HTMLElement))
+                return;
+            const tag = el.tagName.toLowerCase();
+            const role = el.getAttribute("role") || "";
+            const rect = getRect(el);
+            const style = window.getComputedStyle(el);
+            let classification = "unknown";
+            const text = el.innerText || el.textContent || "";
+            const textLower = text.toLowerCase();
+            if (tag === "header" || role === "banner" || el.querySelector("nav"))
+                classification = "navbar";
+            else if (tag === "footer" || role === "contentinfo")
+                classification = "footer";
+            else if (idx === 0 || el.querySelector("h1"))
+                classification = "hero";
+            else if (textLower.includes("pricing") || textLower.includes("$"))
+                classification = "pricing";
+            else if (textLower.includes("feature") || textLower.includes("benefit"))
+                classification = "features";
+            const localBackground = rgbToHex(style.backgroundColor);
+            const localText = rgbToHex(style.color);
+            const childCandidateIds = candidates
+                .filter(c => {
+                const cEl = document.querySelector(`[data-stylemd-candidate-id="${c.candidateId}"]`);
+                return cEl && el.contains(cEl);
+            })
+                .map(c => c.candidateId);
+            sections.push({
+                id: `section_${idx + 1}`,
+                tagName: tag,
+                role,
+                classification,
+                rect,
+                depth: 0,
+                childCandidateIds,
+                // @ts-ignore
+                localContext: {
+                    background: localBackground,
+                    color: localText,
+                    padding: style.padding,
+                }
+            });
+            if (classification === "navbar") {
+                if (style.position === "fixed" || style.position === "sticky") {
+                    layoutPatterns.isStickyHeader = true;
+                }
+            }
+        });
+        return {
+            run_id: runId,
+            url,
+            sections,
+            layoutPatterns,
+        };
+    }, { runId, url: page.url(), candidates });
 }

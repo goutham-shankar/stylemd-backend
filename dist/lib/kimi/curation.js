@@ -8,7 +8,8 @@ function isRateLimitError(error) {
     return normalized.includes("429")
         || normalized.includes("rate limit")
         || normalized.includes("rate_limit")
-        || normalized.includes("tpd");
+        || normalized.includes("tpd")
+        || normalized.includes("overloaded");
 }
 function isTransientNetworkError(error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -34,7 +35,7 @@ async function runKimiCurationQuery(input) {
     const { workspaceDir, systemPrompt, prompt, onTokenUsage, maxRetries = 2, retryDelayMs = 5000, } = input;
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { signal, runId } = input;
-    console.log(`\n📋 [KIMI] Running CURATION stage for run: ${runId}`);
+    console.log(`\n\uD83D\uDCCB [KIMI] Running CURATION stage for run: ${runId}`);
     console.log(`   Workspace: ${workspaceDir}`);
     const configuredMaxSteps = Number(process.env.STYLEMD_KIMI_CURATION_MAX_STEPS);
     const maxSteps = Number.isFinite(configuredMaxSteps) && configuredMaxSteps > 0
@@ -115,7 +116,7 @@ async function runKimiCurationQuery(input) {
                     onTokenUsage?.(usage.input_tokens, usage.output_tokens);
                 },
             });
-            console.log(`✅ [KIMI] CURATION stage complete\n`);
+            console.log(`\u2705 [KIMI] CURATION stage complete\n`);
             return result.text;
         }
         catch (error) {
@@ -124,23 +125,23 @@ async function runKimiCurationQuery(input) {
             const isLastAttempt = attempt >= maxRetries;
             if (isRateLimit) {
                 if (isLastAttempt) {
-                    console.warn(`⚠️  [KIMI] CURATION stage rate-limited after ${attempt + 1} attempts; deterministic fallback will be applied by orchestrator`);
+                    console.warn(`\u26A0\uFE0F  [KIMI] CURATION stage rate-limited after ${attempt + 1} attempts; deterministic fallback will be applied by orchestrator`);
                 }
                 else {
                     const delayS = (retryDelayMs / 1000).toFixed(1);
-                    console.warn(`⚠️  [KIMI] Rate limit hit. Retrying in ${delayS}s (attempt ${attempt + 1}/${maxRetries})...`);
+                    console.warn(`\u26A0\uFE0F  [KIMI] Rate limit hit. Retrying in ${delayS}s (attempt ${attempt + 1}/${maxRetries})...`);
                     await new Promise(resolve => setTimeout(resolve, retryDelayMs));
                     continue;
                 }
             }
             else if (isTransient && !isLastAttempt) {
                 const delayS = (retryDelayMs / 1000).toFixed(1);
-                console.warn(`⚠️  [KIMI] Transient network error. Retrying in ${delayS}s (attempt ${attempt + 1}/${maxRetries})...`);
+                console.warn(`\u26A0\uFE0F  [KIMI] Transient network error. Retrying in ${delayS}s (attempt ${attempt + 1}/${maxRetries})...`);
                 await new Promise(resolve => setTimeout(resolve, retryDelayMs));
                 continue;
             }
             else {
-                console.error(`❌ [KIMI] CURATION stage failed`);
+                console.error(`\u274C [KIMI] CURATION stage failed`);
             }
             throw new Error(`Kimi curation query failed: ${error instanceof Error ? error.message : String(error)}`);
         }

@@ -3,104 +3,131 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createScrapedData = createScrapedData;
 exports.listScrapedData = listScrapedData;
 const zod_1 = require("zod");
-const scraper_1 = require("../services/scraper");
 const ScrapedData_1 = require("../models/ScrapedData");
 const mongodb_1 = require("../../../lib/mongodb");
 const pageUrlCanonical_1 = require("../../../lib/services/pageUrlCanonical");
-const validation_1 = require("../utils/validation");
+const scrapeQueue_1 = require("../../../lib/queue/scrapeQueue");
+const runStorage_1 = require("../services/runStorage");
+const r2_1 = require("../../../lib/queue/r2");
 // ---------------------------------------------------------------------------
-// 1. Receive POST /scraped-data with { url }
+// POST /api/scraped-data  { url }
+//
+// Cache hit: 302-redirect to the public R2 preview URL (storage v2 — the HTML
+// no longer lives in Mongo). Cache miss: enqueue a scrape job in BullMQ and
+// return 202 with jobId.
 // ---------------------------------------------------------------------------
 const postSchema = zod_1.z.object({
     url: zod_1.z.string().url(),
+    provider: zod_1.z.enum(["claude", "kimi"]).optional().default("kimi"),
+    force: zod_1.z.boolean().optional().default(false),
+    /**
+     * Storage v2.1: when true, the worker also uploads raw.html to
+     * `websites/{slug}/debug/raw.html`. Off by default.
+     */
+    debugMode: zod_1.z.boolean().optional().default(false),
 });
+const MAX_WAITING = parseInt(process.env.QUEUE_MAX_WAITING || "500", 10);
 async function createScrapedData(req, res) {
     try {
-        // 🟡 FIX 7: OPTIONAL SAFETY FOR SCRAPE ENDPOINT
         const { url } = req.body;
         if (!url || typeof url !== "string") {
             res.status(400).json({ ok: false, error: "Invalid or missing URL" });
             return;
         }
-        postSchema.parse({ url });
-        // 2. Normalize URL (Strip query params and hashes via canonicalPageUrl)
+        const parsed = postSchema.parse(req.body);
+        const provider = parsed.provider;
+        const force = parsed.force;
+        const debugMode = parsed.debugMode;
         const urlNormalized = (0, pageUrlCanonical_1.canonicalPageUrl)(url);
-        console.log(`[SCRAPE] start url=${urlNormalized}`);
-        // 3. Check MongoDB: Use pageUrlVariantsForLookup to catch all variants
-        const variants = (0, pageUrlCanonical_1.pageUrlVariantsForLookup)(urlNormalized);
-        const existing = await ScrapedData_1.ScrapedData.findOne({ url: { $in: variants } }).lean();
-        // STRICT validity check: return cached only if valid
-        if (existing && (0, validation_1.isValidScrapedRecord)(existing)) {
-            console.log(`[SCRAPE] db-hit (valid) url=${urlNormalized}`);
-            res.json({ ok: true, data: existing });
+        const tag = `[SCRAPE ${urlNormalized}]`;
+        const t0 = Date.now();
+        const elapsed = () => `+${Date.now() - t0}ms`;
+        console.log(`${tag} request received force=${force}`);
+        // ── Cache check — redirect to R2 if completed ────────────────────────
+        if (!force) {
+            const variants = (0, pageUrlCanonical_1.pageUrlVariantsForLookup)(urlNormalized);
+            const existing = await ScrapedData_1.ScrapedData.findOne({ url: { $in: variants } }).lean();
+            if (existing?.status === "completed" && existing.r2?.previewHtml) {
+                const publicUrl = (0, r2_1.r2PublicUrl)(existing.r2.previewHtml);
+                if (publicUrl) {
+                    console.log(`${tag} ✅ cache HIT — redirecting to ${publicUrl} ${elapsed()}`);
+                    res.redirect(302, publicUrl);
+                    return;
+                }
+            }
+            console.log(`${tag} cache MISS (existing=${!!existing}, status=${existing?.status}) ${elapsed()}`);
+        }
+        // ── Backpressure ───────────────────────────────────────────────────────
+        const waiting = await scrapeQueue_1.scrapeQueue.getWaitingCount();
+        if (waiting > MAX_WAITING) {
+            console.warn(`${tag} ❌ queue full waiting=${waiting}`);
+            res.status(429).json({ ok: false, error: "Queue is full. Please retry shortly.", waiting });
             return;
         }
-        // 🔴 FIX 3: PREVENT INFINITE RE-SCRAPE LOOP
-        if (existing && !(0, validation_1.isValidScrapedRecord)(existing)) {
-            const retries = existing.retryCount || 0;
-            if (retries >= 2) {
-                console.warn(`[SCRAPE] max retries reached for ${urlNormalized}, returning last known data`);
-                res.json({ ok: true, data: existing });
+        // ── Enqueue ────────────────────────────────────────────────────────────
+        // BullMQ rejects ':' in custom job IDs — use '-' as the separator.
+        const jobId = `scrape-${(0, runStorage_1.urlToSlug)(urlNormalized)}`;
+        const existingJob = await scrapeQueue_1.scrapeQueue.getJob(jobId);
+        if (existingJob && !force) {
+            const state = await existingJob.getState();
+            if (state === "waiting" || state === "active" || state === "delayed") {
+                console.log(`${tag} ⏳ job already ${state} jobId=${jobId} — returning 202 ${elapsed()}`);
+                res.status(202).json({
+                    ok: true,
+                    jobId,
+                    status: state,
+                    url: urlNormalized,
+                    message: "Job already in progress for this URL.",
+                });
                 return;
             }
-            // 🟠 FIX 6: ADD LOGGING FOR OVERWRITE
-            console.log(`[SCRAPE] overwriting invalid record (attempt ${retries + 1}): ${urlNormalized}`);
-            // Increment retry count before re-scraping to prevent race loops
-            await (0, mongodb_1.safeWrite)(() => ScrapedData_1.ScrapedData.updateOne({ url: existing.url }, { $inc: { retryCount: 1 } }));
         }
-        // 4. Else: Run scraper (Playwright)
-        console.log(`[SCRAPE] scraping url=${urlNormalized}`);
-        const scraped = await (0, scraper_1.scrape)(urlNormalized);
-        if (!scraped) {
-            console.log(`[SCRAPE] error url=${urlNormalized}`);
-            res.status(500).json({ ok: false, error: "Failed to scrape URL." });
-            return;
+        if (existingJob && force) {
+            console.log(`${tag} force=true → removing prior job ${jobId}`);
+            await existingJob.remove().catch(() => undefined);
         }
-        // 🟠 FIX 2: ENFORCE CANONICAL URL IN DB
-        // 🟠 FIX 4: ENSURE SINGLE WRITE PATH
-        const payload = {
-            url: urlNormalized,
-            title: scraped.title,
-            description: scraped.description,
-            h1: scraped.h1,
-            canonical: scraped.canonical,
-            images: scraped.images,
-            contentText: scraped.contentText,
-            rawHtml: scraped.rawHtml,
-            retryCount: 0, // Reset on success
-            createdAt: new Date(),
-        };
-        await (0, mongodb_1.safeWrite)(() => ScrapedData_1.ScrapedData.updateOne({ url: urlNormalized }, { $set: payload }, { upsert: true }));
-        const doc = await ScrapedData_1.ScrapedData.findOne({ url: urlNormalized }).lean();
-        console.log(`[SCRAPE] success url=${urlNormalized}`);
-        // Return saved document
-        res.status(201).json({ ok: true, data: doc });
+        await scrapeQueue_1.scrapeQueue.add("scrape", { url: urlNormalized, provider, debugMode }, { jobId });
+        await (0, mongodb_1.safeWrite)(() => ScrapedData_1.ScrapedData.updateOne({ url: urlNormalized }, {
+            $set: { url: urlNormalized, runId: jobId, status: "queued", updatedAt: new Date() },
+            $setOnInsert: { createdAt: new Date() },
+        }, { upsert: true }));
+        console.log(`${tag} 🚀 enqueued jobId=${jobId} ${elapsed()}`);
+        res.status(202).json({ ok: true, jobId, status: "queued", url: urlNormalized });
     }
     catch (err) {
-        console.log(`[SCRAPE] error url=${req.body?.url ?? "unknown"}`);
         const status = err instanceof zod_1.z.ZodError ? 400 : 500;
         res.status(status).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
 }
+/**
+ * GET /api/scraped-data?url=...   → returns single doc with R2 URLs resolved.
+ * GET /api/scraped-data           → returns last 100 docs (metadata only).
+ */
 async function listScrapedData(req, res) {
     try {
         const { url } = req.query;
         if (url) {
-            // 🔴 FIX 1: CANONICALIZATION IN GET HANDLER
             const variants = (0, pageUrlCanonical_1.pageUrlVariantsForLookup)((0, pageUrlCanonical_1.canonicalPageUrl)(url));
             const doc = await ScrapedData_1.ScrapedData.findOne({ url: { $in: variants } }).lean();
-            if (doc) {
-                res.json({ ok: true, data: doc });
-                return;
-            }
-            // 🔴 FIX 2: REMOVE HARD 404 IN GET
-            res.json({ ok: true, data: null });
+            res.json({ ok: true, data: doc ? withR2Urls(doc) : null });
             return;
         }
-        const data = await ScrapedData_1.ScrapedData.find({}, { rawHtml: 0 }).sort({ createdAt: -1 }).limit(100).lean();
-        res.json({ ok: true, data });
+        const docs = await ScrapedData_1.ScrapedData.find({}).sort({ updatedAt: -1 }).limit(100).lean();
+        res.json({ ok: true, data: docs.map(withR2Urls) });
     }
     catch (err) {
         res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
+}
+/** Attach resolved public R2 URLs without mutating the stored keys. */
+function withR2Urls(doc) {
+    const r2 = doc.r2 ?? {};
+    return {
+        ...doc,
+        r2Urls: {
+            previewHtml: (0, r2_1.r2PublicUrl)(r2.previewHtml),
+            designMd: (0, r2_1.r2PublicUrl)(r2.designMd),
+            screenshot: (0, r2_1.r2PublicUrl)(r2.screenshot),
+        },
+    };
 }

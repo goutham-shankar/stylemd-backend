@@ -14,12 +14,22 @@ const stylemdSessionStore_1 = require("../../lib/store/stylemdSessionStore");
 const artifacts_1 = require("../../lib/stylemd-artifacts/artifacts");
 const provider_1 = require("../../lib/stylemd-artifacts/provider");
 const helpers_1 = require("../../lib/stylemd-artifacts/helpers");
+const kimiUsage_1 = require("../../lib/services/kimiUsage");
 const curation_1 = require("../../lib/kimi/curation");
 // Token tracking for queries
 const tokenUsageMap = new Map();
 function storeTokenUsage(runId, queryLabel, inputTokens, outputTokens) {
     const key = `${runId}::${queryLabel}`;
     tokenUsageMap.set(key, { inputTokens, outputTokens });
+}
+function getTokenUsage(runId, queryLabel) {
+    const key = `${runId}::${queryLabel}`;
+    const usage = tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+    return {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.inputTokens + usage.outputTokens,
+    };
 }
 const CURATION_ALLOWED_TOOLS = ["Read", "Grep", "Glob", "LS"];
 const CURATION_QUERY_TIMEOUT_MS = 600000;
@@ -99,11 +109,7 @@ function getResultFailureDetail(message) {
     return "unknown error result";
 }
 function extractJsonCandidate(text) {
-    // Strip markdown code fences first - more robust approach
-    let cleaned = text.replace(/^```json\s*/i, "").replace(/```$/im, "");
-    cleaned = cleaned.replace(/^```\s*/i, "").replace(/```$/im, "");
-    cleaned = cleaned.replace(/^```\s*/i, "").replace(/```$/im, "");
-    // Try fenced JSON blocks
+    // Try fenced JSON blocks first
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
     if (fenced?.[1]) {
         const candidate = fenced[1].trim();
@@ -129,12 +135,8 @@ function extractJsonCandidate(text) {
             return candidate;
         }
     }
-    // Fallback: return trimmed text (will likely fail to parse, but gives better error context)
     return text.trim();
 }
-/**
- * Check if a string has balanced braces and brackets
- */
 function hasBalancedBraces(text) {
     let braceCount = 0;
     let bracketCount = 0;
@@ -215,25 +217,17 @@ function validateStyleMdCurationDecisions(response, allowedComponentIds) {
     return decisions;
 }
 function parseAndValidateStyleMdCurationResponse(rawText, allowedComponentIds) {
-    // Handle empty response early
     if (!rawText || rawText.trim().length === 0) {
         throw new Error("KIMI returned empty response. This may indicate: 1) Rate limit hit silently, 2) API timeout, or 3) Response truncation. Check KIMI logs.");
     }
     const jsonCandidate = extractJsonCandidate(rawText);
-    // Add comprehensive error handling with debugging context
     let parsedJson;
     try {
         parsedJson = JSON.parse(jsonCandidate);
     }
     catch (parseError) {
         const errorMsg = parseError instanceof Error ? parseError.message : String(parseError);
-        // Log debugging information for incomplete/malformed JSON
         console.error(`❌ [CURATION] JSON parsing failed: ${errorMsg}`);
-        console.error(`   Raw response length: ${rawText.length} characters`);
-        console.error(`   Extracted JSON length: ${jsonCandidate.length} characters`);
-        console.error(`   Raw response (first 300): ${rawText.slice(0, 300)}`);
-        console.error(`   Extracted JSON (first 300): ${jsonCandidate.slice(0, 300)}`);
-        // Check for common issues
         if (jsonCandidate.length === 0) {
             if (rawText.length === 0) {
                 throw new Error("KIMI response was completely empty - possible rate limit, timeout, or API error");
@@ -255,20 +249,13 @@ function toRunRelative(runDir, absolutePath) {
     const value = (0, node_path_1.relative)(runDir, absolutePath);
     return value.split("\\").join("/");
 }
-/**
- * OPTIMIZATION: Pre-filter components using simple heuristics to reduce AI analysis load
- * Skips obviously unwanted components like popups, modals, and invisible elements
- * This can reduce component set by 30-50% without AI, saving significant tokens
- */
 function preFilterComponents(components) {
-    // If already small, skip filtering to preserve all data
     if (components.length <= 30) {
         return components;
     }
     const filtered = components.filter((component) => {
         const selector = component.selector.toLowerCase();
         const tagName = component.tagName.toLowerCase();
-        // FILTER: Skip obvious popups/modals/overlays by selector pattern
         const popupPatterns = [
             "modal", "popup", "overlay", "dialog", "drawer", "sheet",
             "toast", "notification", "cookie", "banner", "consent",
@@ -278,28 +265,23 @@ function preFilterComponents(components) {
             tagName.includes(pattern))) {
             return false;
         }
-        // FILTER: Skip invisible components (height or width near zero)
         if (component.rect.width < 10 && component.rect.height < 10) {
             return false;
         }
-        // FILTER: Skip tiny components unlikely to be reusable patterns
         const area = component.rect.width * component.rect.height;
         if (area < 100) {
             return false;
         }
-        // Keep everything else
         return true;
     });
     const skipped = components.length - filtered.length;
     if (skipped > 0) {
         console.log(`   📊 [OPTIMIZATION] Pre-filtered ${skipped}/${components.length} components (${Math.round(skipped / components.length * 100)}% reduction)`);
     }
-    return filtered.length > 0 ? filtered : components; // Fallback to all if filtering removes everything
+    return filtered.length > 0 ? filtered : components;
 }
 function buildPromptInput(input) {
     const { runId, url, runDir, dedupAgentManifestPath, components } = input;
-    // OPTIMIZATION: Minimize prompt size by only including essential component metadata
-    // File paths are not needed in prompt - AI can read manifest.agent.json instead
     return {
         run_id: runId,
         url,
@@ -309,14 +291,11 @@ function buildPromptInput(input) {
         dedup_manifest: toRunRelative(runDir, dedupAgentManifestPath),
         component_count: components.length,
         component_ids: components.map((component) => component.componentId),
-        // OPTIMIZATION: Exclude redundant file paths - reduce from ~6 paths per component to 0
-        // AI can read components_manifest.agent.json which has all file references
         components: components.map((component) => ({
             component_id: component.componentId,
             selector: component.selector,
             tag_name: component.tagName,
             rect: component.rect,
-            // Removed: files object with all 6 file paths (saves ~400+ tokens for 50+ components)
         })),
     };
 }
@@ -335,6 +314,8 @@ function buildDecisionPrompt(promptInput) {
         "",
         "Decision priorities:",
         "- preserve reconstruction-critical layout/composition patterns",
+        "- preserve large editorial surfaces, atmospheric sections, and layered background regions",
+        "- do NOT aggressively prune whitespace systems or subtle branding surfaces",
         "- prefer clean representative components",
         "- avoid redundant near-duplicates unless structurally different",
         "- downweight popup/modal/chat/cookie contamination unless no clean alternative exists",
@@ -743,11 +724,9 @@ async function applyStyleMdCurationDecisions(input, options = {}) {
 async function runCurateStage(input) {
     const { runId, url, dedupAgentManifestPath, components, signal } = input;
     const runtime = input.runtime ?? (0, provider_1.resolveStyleMdRuntimeConfig)("claude");
-    // Select query function based on provider
     let runClaudeQuery = input.runClaudeQuery ?? runClaudeCurationQuery;
     if (runtime.provider === "kimi") {
         console.log(`🎯 [STYLEMD] Using KIMI provider for curation stage`);
-        // Adapt Kimi query function to Claude query interface when no test override is supplied.
         if (!input.runClaudeQuery) {
             runClaudeQuery = async (queryInput) => {
                 return (0, curation_1.runKimiCurationQuery)({
@@ -772,7 +751,6 @@ async function runCurateStage(input) {
     const runDir = (0, artifacts_1.getStyleMdRunDir)(runId);
     const artifacts = [];
     (0, helpers_1.assertNotAborted)(signal);
-    // OPTIMIZATION: Pre-filter components to reduce token usage
     const filteredComponents = preFilterComponents(components);
     const promptInput = buildPromptInput({
         runId,
@@ -825,6 +803,13 @@ async function runCurateStage(input) {
                 curatedManifest: applied.curatedManifest,
                 keptComponentIds: [],
                 deletedComponentIds: [],
+                query: {
+                    ...(0, kimiUsage_1.createEmptyKimiTokenUsage)(),
+                    maxTurns: 0,
+                    timeoutMs: CURATION_QUERY_TIMEOUT_MS,
+                    durationMs: 0,
+                    failed: false,
+                },
             },
             artifacts,
         };
@@ -853,6 +838,7 @@ async function runCurateStage(input) {
     let parsed = null;
     let lastDecisionRaw = "";
     let queryError;
+    let queryTokens = (0, kimiUsage_1.createEmptyKimiTokenUsage)();
     const decisionPrompt = buildDecisionPrompt(promptInput);
     const workspaceDir = await prepareCurateWorkspace({
         runDir,
@@ -872,12 +858,11 @@ async function runCurateStage(input) {
         });
         lastDecisionRaw = decisionRaw;
         parsed = parseAndValidateStyleMdCurationResponse(decisionRaw, allowedIds);
+        queryTokens = getTokenUsage(runId, "curate-decision");
     }
     catch (error) {
         queryError = (0, helpers_1.errorToMessage)(error);
-        // Add detailed error context for debugging
         console.error(`\n❌ [CURATION] Query failed with error: ${queryError}`);
-        console.error(`   Response received (${lastDecisionRaw.length} chars): ${lastDecisionRaw.slice(0, 300)}`);
     }
     const queryDurationMs = Date.now() - queryStartedAt;
     let decisions = [];
@@ -968,6 +953,14 @@ async function runCurateStage(input) {
             curatedManifest: applied.curatedManifest,
             keptComponentIds: applied.keptComponentIds,
             deletedComponentIds: applied.deletedComponentIds,
+            query: {
+                ...queryTokens,
+                maxTurns: 0,
+                timeoutMs: CURATION_QUERY_TIMEOUT_MS,
+                durationMs: queryDurationMs,
+                failed: Boolean(queryError),
+                failureReason: queryError,
+            },
         },
         artifacts,
     };

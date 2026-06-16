@@ -21,7 +21,8 @@ function storeTokenUsage(runId, queryLabel, inputTokens, outputTokens) {
 }
 function getTokenUsage(runId, queryLabel) {
     const key = `${runId}::${queryLabel}`;
-    return tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+    const usage = tokenUsageMap.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+    return { ...usage, totalTokens: usage.inputTokens + usage.outputTokens };
 }
 const STYLEGUIDE_ALLOWED_TOOLS = ["Read", "Grep", "Glob", "LS"];
 const STYLEGUIDE_QUERY_TIMEOUT_MS = 600000;
@@ -46,11 +47,12 @@ function emitObservedStyleMdEvent(runId, event) {
     void (0, artifacts_1.appendStyleMdLogLine)(runId, fullEvent);
 }
 class StyleguideStageError extends Error {
-    constructor(message, warning, artifacts) {
+    constructor(message, warning, artifacts, query) {
         super(message);
         this.name = "StyleguideStageError";
         this.warning = warning;
         this.artifacts = artifacts;
+        this.query = query;
     }
 }
 exports.StyleguideStageError = StyleguideStageError;
@@ -290,7 +292,7 @@ function collectResponsiveEvidenceScreenshotPaths(runDir, responsiveHoverEvidenc
     return [...paths];
 }
 async function buildStyleguideAgentEvidence(input) {
-    const { runId, url, runDir, curatedManifestPath, curatedManifest, responsiveHoverEvidencePath, } = input;
+    const { runId, url, runDir, curatedManifestPath, curatedManifest, responsiveHoverEvidencePath, designTokenManifestPath, semanticStructurePath, } = input;
     return {
         run_id: runId,
         url,
@@ -298,6 +300,8 @@ async function buildStyleguideAgentEvidence(input) {
         full_screenshot: "full_screenshot.png",
         curated_manifest: toRunRelative(runDir, curatedManifestPath),
         responsive_hover_evidence: responsiveHoverEvidencePath ? toRunRelative(runDir, responsiveHoverEvidencePath) : null,
+        design_token_manifest: designTokenManifestPath ? toRunRelative(runDir, designTokenManifestPath) : null,
+        semantic_structure: semanticStructurePath ? toRunRelative(runDir, semanticStructurePath) : null,
         unit_count: curatedManifest.units.length,
         units: await Promise.all(curatedManifest.units.map(async (unit) => ({
             unit_id: unit.unit_id,
@@ -305,7 +309,8 @@ async function buildStyleguideAgentEvidence(input) {
             study_label: unit.study_label,
             reason: unit.reason,
             component_ids: [...unit.component_ids],
-            components: await Promise.all(unit.components.slice(0, 1).map(async (component) => {
+            // Increase component count per unit for denser evidence
+            components: await Promise.all(unit.components.slice(0, 3).map(async (component) => {
                 const metadataJson = await safeReadJson(component.metadataPath);
                 const domAgentText = await safeReadText(component.agentDomPath);
                 const stylesAgentJson = await safeReadJson(component.agentStylesPath);
@@ -334,7 +339,7 @@ async function buildStyleguideAgentEvidence(input) {
                         metadata: {
                             children_count: typeof metadata?.childrenCount === "number" ? metadata.childrenCount : null,
                         },
-                        dom_excerpt: domAgentText ? cleanSnippet(domAgentText, 200) : "",
+                        dom_excerpt: domAgentText ? cleanSnippet(domAgentText, 1000) : "",
                         styles: toStringMap(stylesAgentJson),
                         pseudo: {
                             before: toStringMap(pseudoObj.before),
@@ -377,16 +382,23 @@ function buildStyleguidePrompt(promptInput) {
         "All file paths are relative to the workspace root. Never prefix paths with '/'.",
         "For large JSON/text files, use Read with non-negative offset + limit windows.",
         "",
-        "Primary files to inspect:",
-        "- styleguide/evidence.agent.json",
-        "- component agent files under components/<id>/",
+        "Primary files to inspect (MANDATORY):",
+        "- styleguide/evidence.agent.json (Entry point)",
+        "- semantic_analysis.json (DESIGN TOKEN SOURCE OF TRUTH)",
+        "- semantic_structure.json (PAGE STRUCTURE SOURCE OF TRUTH)",
+        "- components/<id>/ (Specific component details)",
         "",
         "Output requirements:",
-        "1. Output markdown only (no JSON, no code fences, no preamble).",
-        "2. Focus on faithful reconstruction: composition, hierarchy, spacing rhythm, typography, colors/surfaces, interaction states, and responsive behavior.",
-        "3. Ground claims in evidence; use '[unconfirmed]' where evidence is weak.",
-        "4. Prefer concise but concrete implementation-facing guidance.",
-        "5. Typography section must explicitly cover all required observed families from run context.",
+        "1. Output markdown only (DESIGN.md format). The output MUST start with '# ' (an H1 heading).",
+        "2. ABSOLUTELY NO RAW CSS: Do NOT copy, quote, or reproduce any CSS rules, selectors, properties, or stylesheet content from the workspace. Describe visual properties in plain English prose only (e.g., write 'buttons use 8px corner radius' not '.btn { border-radius: 8px }').",
+        "3. FOCUS ON VISUAL IDENTITY: Use palette, typography, and spacing from semantic_analysis.json as the primary ground truth to preserve brand personality.",
+        "4. ATMOSPHERIC DEPTH: Use semantic_structure.json to understand the surface hierarchy (canvas, hero, card, etc.) and preserve visual atmosphere.",
+        "5. IDENTIFY BRAND MOOD: Classify the site style (e.g., Cinematic, Brutalist, Luxury, Corporate) based on spacing, typography weight, and shadow usage.",
+        "6. COMPOSITED APPEARANCE: Prioritize the 'effective' backgrounds and area-weighted colors over raw CSS values.",
+        "7. SNAPPING: Use the normalized/snapped pixel values for spacing and radius.",
+        "8. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context.",
+        "9. GROUNDING: Every claim MUST be grounded in evidence; use '[unconfirmed]' where evidence is weak or missing.",
+        "10. STRUCTURED JSON: At the end of the markdown, include a fenced code block labeled `stylemd-json`. You MUST use ONLY these observed families: " + promptInput.required_typography_families.join(", ") + ". Schema: { \"typography\": { \"display\": \"Font Name\", \"body\": \"Font Name\", \"scale\": \"modern\" | \"editorial\" }, \"fonts\": [ { \"name\": \"Font Name\", \"role\": \"Display\" | \"Body\" | \"UI\" | \"Mono\" } ], \"palette\": [ { \"name\": \"Label\", \"hex\": \"#HEX\", \"desc\": \"role\" } ], \"mood\": \"MoodName\", \"radius\": \"sharp\" | \"medium\" | \"pill\" | \"organic\", \"spacing\": \"4px\" | \"8px\" | string, \"cornerRadius\": \"4px\" | \"8px\" | string, \"accentColor\": \"#HEX\" }.",
         "",
         "Run context (JSON):",
         JSON.stringify(promptInput, null, 2),
@@ -405,7 +417,8 @@ function buildRetryPrompt(input) {
         "The prior draft failed these checks:",
         ...qualityIssues.map((issue) => `- ${issue}`),
         "",
-        "Keep markdown only.",
+        "Keep markdown only. The output MUST start with '# ' (H1 heading). ABSOLUTELY NO raw CSS rules, selectors, or stylesheet content anywhere in the output — describe styles in plain English prose only.",
+        "ENSURE the `stylemd-json` block is present and accurate at the end.",
         "Use styleguide/evidence.agent.json as source of truth.",
         "",
         "Run context (JSON):",
@@ -437,6 +450,18 @@ function validateStyleguideMarkdownQuality(markdown, requiredTypographyFamilies)
     if (!/^#\s+/m.test(markdown) && !/^##\s+/m.test(markdown)) {
         issues.push("markdown has no section headings");
     }
+    if (!/^#\s+/m.test(markdown)) {
+        issues.push("markdown must start with an H1 heading (# Title), not CSS or other content");
+    }
+    if (/^\s*\/\*/.test(trimmed) || /^\s*[.#][\w-]+\s*\{/.test(trimmed)) {
+        issues.push("output starts with raw CSS rules — must start with an H1 markdown heading instead");
+    }
+    // Detect large inline CSS dumps anywhere in the output (outside fenced blocks)
+    const noFenced = markdown.replace(/```[\s\S]*?```/g, "");
+    const cssRuleCount = (noFenced.match(/\{[^}]{5,200}\}/g) ?? []).filter(b => /:\s*[^;]+;/.test(b)).length;
+    if (cssRuleCount > 5) {
+        issues.push(`output contains ${cssRuleCount} raw CSS rule blocks — do NOT copy stylesheet content, describe styles in prose only`);
+    }
     if (/^\s*[\[{]/.test(trimmed) && /"units"\s*:/.test(trimmed)) {
         issues.push("output appears to be JSON, not markdown");
     }
@@ -444,6 +469,29 @@ function validateStyleguideMarkdownQuality(markdown, requiredTypographyFamilies)
         const familyPattern = new RegExp(escapeRegExp(family), "i");
         if (!familyPattern.test(markdown)) {
             issues.push(`missing required typography family '${family}' in markdown output`);
+        }
+    }
+    // Ensure stylemd-json block exists and contains all required families
+    const jsonMatch = markdown.match(/```(?:stylemd-json|json)\s*\n([\s\S]*?)```/);
+    if (!jsonMatch) {
+        issues.push("missing required 'stylemd-json' block at the end of output");
+    }
+    else {
+        try {
+            const parsed = JSON.parse(jsonMatch[1]);
+            const fonts = parsed.fonts || [];
+            const jsonFamilies = new Set(fonts.map((f) => (f.name || "").toLowerCase()));
+            for (const family of requiredTypographyFamilies) {
+                if (!jsonFamilies.has(family.toLowerCase())) {
+                    issues.push(`structured JSON is missing required typography family '${family}'`);
+                }
+            }
+            if (!parsed.typography?.display || !parsed.typography?.body) {
+                issues.push("structured JSON is missing primary typography mapping (display/body)");
+            }
+        }
+        catch {
+            issues.push("structured JSON block is not valid JSON");
         }
     }
     const requiredCoverageChecks = [
@@ -1363,6 +1411,8 @@ async function runStyleguideStage(input) {
     const responsiveHoverEvidence = responsiveHoverEvidencePath
         ? await safeReadJson(responsiveHoverEvidencePath)
         : null;
+    const semanticAnalysisPath = (0, node_path_1.join)(runDir, "semantic_analysis.json");
+    const semanticStructurePath = (0, node_path_1.join)(runDir, "semantic_structure.json");
     const evidenceAgent = await buildStyleguideAgentEvidence({
         runId,
         url,
@@ -1370,6 +1420,8 @@ async function runStyleguideStage(input) {
         curatedManifestPath,
         curatedManifest,
         responsiveHoverEvidencePath,
+        designTokenManifestPath: semanticAnalysisPath,
+        semanticStructurePath: semanticStructurePath,
     });
     const evidenceAgentArtifact = await (0, artifacts_1.writeStyleMdJson)(runId, (0, node_path_1.join)("styleguide", "evidence.agent.json"), evidenceAgent);
     artifacts.push(evidenceAgentArtifact);
@@ -1401,7 +1453,11 @@ async function runStyleguideStage(input) {
         responsiveHoverEvidencePath,
         responsiveScreenshotPaths: collectResponsiveEvidenceScreenshotPaths(runDir, responsiveHoverEvidence),
         curatedManifest,
-        extraApprovedPaths: [typographyInventoryArtifact.path],
+        extraApprovedPaths: [
+            typographyInventoryArtifact.path,
+            semanticAnalysisPath,
+            semanticStructurePath,
+        ],
     });
     const systemPrompt = [
         "You are a deterministic styleguide synthesis engine.",
@@ -1542,7 +1598,16 @@ async function runStyleguideStage(input) {
                 attempts: attempt,
             },
         });
-        throw new StyleguideStageError(warning, warning, artifacts);
+        throw new StyleguideStageError(warning, warning, artifacts, {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            totalTokens: totalInputTokens + totalOutputTokens,
+            maxTurns: 0,
+            timeoutMs: STYLEGUIDE_QUERY_TIMEOUT_MS,
+            durationMs: queryDurationMs,
+            failed: true,
+            failureReason,
+        });
     }
     const styleMdArtifact = await (0, artifacts_1.writeStyleMdText)(runId, "style.md", styleMarkdown, "text");
     const validationArtifact = await (0, artifacts_1.writeStyleMdJson)(runId, (0, node_path_1.join)("styleguide", "validation.json"), {

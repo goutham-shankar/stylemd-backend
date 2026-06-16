@@ -1,0 +1,13 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.queueAdminRouter = void 0;
+const express_1 = require("express");
+const queueAdmin_controller_1 = require("../controllers/queueAdmin.controller");
+const requireAdmin_1 = require("../middleware/requireAdmin");
+exports.queueAdminRouter = (0, express_1.Router)();
+exports.queueAdminRouter.use(requireAdmin_1.requireAdmin);
+exports.queueAdminRouter.get("/queues/stats", queueAdmin_controller_1.getQueueStats);
+exports.queueAdminRouter.get("/queues/jobs", queueAdmin_controller_1.listJobs);
+exports.queueAdminRouter.get("/jobs/:id", queueAdmin_controller_1.getJob);
+exports.queueAdminRouter.post("/jobs/:id/retry", queueAdmin_controller_1.retryJob);
+exports.queueAdminRouter.delete("/jobs/:id", queueAdmin_controller_1.removeJob);

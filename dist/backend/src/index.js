@@ -14,7 +14,7 @@ const env_1 = require("./config/env");
 async function start() {
     console.log("---------------------------------------------------------------------------");
     console.log(`[startup] BUILD_ID: ${Date.now()}`); // Detect stale PM2 dist code
-    console.log(`[startup] booting StyleMD standalone backend on port ${env_1.config.port}`);
+    console.log(`[startup] booting Design Probe backend on port ${env_1.config.port}`);
     console.log(`[startup] environment: ${env_1.config.nodeEnv}`);
     console.log("---------------------------------------------------------------------------");
     try {
