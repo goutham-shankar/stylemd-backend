@@ -8,6 +8,7 @@ import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { router as apiRouter } from "./routes/index";
 import { queueAdminRouter } from "./routes/queueAdmin";
+import { adminRouter } from "./routes/admin";
 import { errorHandler } from "./middleware/errorHandler";
 import { requireAdmin } from "./middleware/requireAdmin";
 
@@ -48,7 +49,8 @@ export function createApp(): express.Application {
   });
   app.use("/admin/queues", requireAdmin, bullBoardAdapter.getRouter());
 
-  // ── JSON admin API.
+  // ── JSON admin API (consolidated + legacy queue admin).
+  app.use("/api/admin", adminRouter);
   app.use("/api/admin", queueAdminRouter);
 
   app.use("/", apiRouter);
