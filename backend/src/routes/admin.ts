@@ -25,6 +25,13 @@ import {
   retryJob,
   removeJob,
 } from "../controllers/queueAdmin.controller";
+import {
+  listUsers,
+  createUser,
+  updateUserRole,
+  deleteUser,
+  getMe,
+} from "../controllers/users.controller";
 
 export const adminRouter = Router();
 
@@ -55,6 +62,13 @@ adminRouter.delete("/scraped/:id", deleteScraped);
 // Raw collection browser
 adminRouter.get("/collections", listCollections);
 adminRouter.get("/collections/:name", browseCollection);
+
+// Users
+adminRouter.get("/me", getMe);
+adminRouter.get("/users", listUsers);
+adminRouter.post("/users", createUser);
+adminRouter.patch("/users/:uid/role", updateUserRole);
+adminRouter.delete("/users/:uid", deleteUser);
 
 // Queue (re-exports from queueAdmin)
 adminRouter.get("/queues/stats", getQueueStats);

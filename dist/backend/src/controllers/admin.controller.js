@@ -6,16 +6,25 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getDashboardStats = getDashboardStats;
 exports.listRuns = listRuns;
 exports.getRunDetail = getRunDetail;
+exports.getRunBySlug = getRunBySlug;
 exports.deleteRun = deleteRun;
 exports.listScraped = listScraped;
 exports.getScrapedDetail = getScrapedDetail;
 exports.deleteScraped = deleteScraped;
 exports.listCollections = listCollections;
 exports.browseCollection = browseCollection;
+exports.updateRun = updateRun;
+exports.rerunScrape = rerunScrape;
+exports.newScrape = newScrape;
+exports.getRunHtml = getRunHtml;
+exports.updateRunHtml = updateRunHtml;
+exports.updateScraped = updateScraped;
 const mongoose_1 = __importDefault(require("mongoose"));
 const StyleMdRun_1 = require("../models/StyleMdRun");
 const ScrapedData_1 = require("../models/ScrapedData");
 const r2_1 = require("../../../lib/queue/r2");
+const scrapeQueue_1 = require("../../../lib/queue/scrapeQueue");
+const runStorage_1 = require("../services/runStorage");
 // GET /api/admin/stats
 async function getDashboardStats(_req, res) {
     try {
@@ -46,6 +55,7 @@ async function getDashboardStats(_req, res) {
                 runs: { total: totalRuns, byStatus: runsByStatus },
                 scraped: { total: totalScraped, byStatus: scrapedByStatus },
                 recentRuns,
+                r2PublicBase: (process.env.R2_PUBLIC_BASE ?? "").replace(/\/+$/, "") || null,
                 db: {
                     name: mongoose_1.default.connection.db.databaseName,
                     collections: dbStats.collections,
@@ -106,6 +116,35 @@ async function getRunDetail(req, res) {
         };
         const designMdText = await (0, r2_1.fetchR2Text)(r2?.designMd);
         res.json({ ok: true, data: { ...doc, r2Urls, designMdText } });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// GET /api/admin/runs/by-slug/:slug
+async function getRunBySlug(req, res) {
+    try {
+        const doc = await StyleMdRun_1.StyleMdRun.findOne({ slug: req.params.slug })
+            .sort({ createdAt: -1 })
+            .lean();
+        if (!doc) {
+            res.status(404).json({ ok: false, error: "Run not found" });
+            return;
+        }
+        const r2 = doc.r2 ?? null;
+        const r2Urls = {
+            previewHtml: (0, r2_1.r2PublicUrl)(r2?.previewHtml),
+            designMd: (0, r2_1.r2PublicUrl)(r2?.designMd),
+            screenshot: (0, r2_1.r2PublicUrl)(r2?.screenshot),
+            semanticStructure: (0, r2_1.r2PublicUrl)(r2?.semanticStructure),
+            designTokens: (0, r2_1.r2PublicUrl)(r2?.designTokens),
+        };
+        const designMdText = await (0, r2_1.fetchR2Text)(r2?.designMd);
+        // Also fetch matching scraped data
+        const scraped = await ScrapedData_1.ScrapedData.findOne({ url: doc.url })
+            .select("-contentText -rawHtml")
+            .lean();
+        res.json({ ok: true, data: { ...doc, r2Urls, designMdText }, scraped: scraped ?? null });
     }
     catch (err) {
         res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -209,6 +248,161 @@ async function browseCollection(req, res) {
             coll.countDocuments(),
         ]);
         res.json({ ok: true, data: docs, total, page, limit, pages: Math.ceil(total / limit) });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// PATCH /api/admin/runs/:runId
+async function updateRun(req, res) {
+    try {
+        const { runId } = req.params;
+        const allowed = ["title", "description", "status", "error"];
+        const updates = {};
+        for (const key of allowed) {
+            if (key in req.body)
+                updates[key] = req.body[key];
+        }
+        if (Object.keys(updates).length === 0) {
+            res.status(400).json({ ok: false, error: "No valid fields to update" });
+            return;
+        }
+        const doc = await StyleMdRun_1.StyleMdRun.findOneAndUpdate({ runId }, { $set: updates }, { new: true }).lean();
+        if (!doc) {
+            res.status(404).json({ ok: false, error: "Run not found" });
+            return;
+        }
+        res.json({ ok: true, data: doc });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// POST /api/admin/runs/:runId/rerun
+async function rerunScrape(req, res) {
+    try {
+        const { runId } = req.params;
+        const doc = await StyleMdRun_1.StyleMdRun.findOne({ runId }).lean();
+        if (!doc) {
+            res.status(404).json({ ok: false, error: "Run not found" });
+            return;
+        }
+        const url = doc.url;
+        const slug = (0, runStorage_1.urlToSlug)(url);
+        const jobId = `scrape-${slug}`;
+        // Remove existing job if present so the new one doesn't conflict
+        const existingJob = await scrapeQueue_1.scrapeQueue.getJob(jobId);
+        if (existingJob) {
+            await existingJob.remove().catch(() => undefined);
+        }
+        // Delete the run document
+        await StyleMdRun_1.StyleMdRun.deleteOne({ runId });
+        // Re-queue the scrape
+        await scrapeQueue_1.scrapeQueue.add("scrape", { url }, { jobId });
+        res.json({ ok: true, message: "Re-scrape queued", jobId, url });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// POST /api/admin/scrape  { url, provider?, force? }
+async function newScrape(req, res) {
+    try {
+        const { url, provider, force } = req.body;
+        if (!url || typeof url !== "string") {
+            res.status(400).json({ ok: false, error: "URL is required" });
+            return;
+        }
+        let normalizedUrl = url.trim();
+        if (!/^https?:\/\//i.test(normalizedUrl))
+            normalizedUrl = `https://${normalizedUrl}`;
+        const slug = (0, runStorage_1.urlToSlug)(normalizedUrl);
+        const jobId = `scrape-${slug}`;
+        const existingJob = await scrapeQueue_1.scrapeQueue.getJob(jobId);
+        if (existingJob && !force) {
+            const state = await existingJob.getState();
+            if (state === "waiting" || state === "active" || state === "delayed") {
+                res.json({ ok: true, jobId, status: state, url: normalizedUrl, message: "Already in progress" });
+                return;
+            }
+        }
+        if (existingJob) {
+            await existingJob.remove().catch(() => undefined);
+        }
+        await scrapeQueue_1.scrapeQueue.add("scrape", { url: normalizedUrl, provider: provider || "kimi" }, { jobId });
+        res.json({ ok: true, jobId, status: "queued", url: normalizedUrl, slug });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// GET /api/admin/runs/by-slug/:slug/html
+async function getRunHtml(req, res) {
+    try {
+        const doc = await StyleMdRun_1.StyleMdRun.findOne({ slug: req.params.slug })
+            .sort({ createdAt: -1 })
+            .lean();
+        if (!doc) {
+            res.status(404).json({ ok: false, error: "Run not found" });
+            return;
+        }
+        const r2 = doc.r2 ?? null;
+        const htmlKey = r2?.previewHtml;
+        const html = await (0, r2_1.fetchR2Text)(htmlKey);
+        res.json({ ok: true, html: html ?? "", key: htmlKey });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// PUT /api/admin/runs/by-slug/:slug/html
+async function updateRunHtml(req, res) {
+    try {
+        const doc = await StyleMdRun_1.StyleMdRun.findOne({ slug: req.params.slug })
+            .sort({ createdAt: -1 })
+            .lean();
+        if (!doc) {
+            res.status(404).json({ ok: false, error: "Run not found" });
+            return;
+        }
+        const r2 = doc.r2 ?? null;
+        const htmlKey = r2?.previewHtml;
+        if (!htmlKey) {
+            res.status(400).json({ ok: false, error: "No preview HTML key on this run" });
+            return;
+        }
+        const { html } = req.body;
+        if (typeof html !== "string") {
+            res.status(400).json({ ok: false, error: "html field is required" });
+            return;
+        }
+        await (0, r2_1.uploadR2)(htmlKey, html, "text/html; charset=utf-8");
+        res.json({ ok: true, message: "HTML updated", key: htmlKey });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// PATCH /api/admin/scraped/:id
+async function updateScraped(req, res) {
+    try {
+        const { id } = req.params;
+        const allowed = ["title", "description", "status"];
+        const updates = {};
+        for (const key of allowed) {
+            if (key in req.body)
+                updates[key] = req.body[key];
+        }
+        if (Object.keys(updates).length === 0) {
+            res.status(400).json({ ok: false, error: "No valid fields to update" });
+            return;
+        }
+        const doc = await ScrapedData_1.ScrapedData.findByIdAndUpdate(id, { $set: updates }, { new: true }).lean();
+        if (!doc) {
+            res.status(404).json({ ok: false, error: "Document not found" });
+            return;
+        }
+        res.json({ ok: true, data: doc });
     }
     catch (err) {
         res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
