@@ -20,3 +20,6 @@ out
 
 # Backend
 backend/dist
+
+# Admin folder
+admin/

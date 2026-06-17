@@ -8,6 +8,9 @@ import {
   deleteRun,
   updateRun,
   rerunScrape,
+  newScrape,
+  getRunHtml,
+  updateRunHtml,
   listScraped,
   getScrapedDetail,
   deleteScraped,
@@ -33,10 +36,15 @@ adminRouter.get("/stats", getDashboardStats);
 // Runs
 adminRouter.get("/runs", listRuns);
 adminRouter.get("/runs/by-slug/:slug", getRunBySlug);
+adminRouter.get("/runs/by-slug/:slug/html", getRunHtml);
+adminRouter.put("/runs/by-slug/:slug/html", updateRunHtml);
 adminRouter.get("/runs/:runId", getRunDetail);
 adminRouter.patch("/runs/:runId", updateRun);
 adminRouter.delete("/runs/:runId", deleteRun);
 adminRouter.post("/runs/:runId/rerun", rerunScrape);
+
+// New scrape
+adminRouter.post("/scrape", newScrape);
 
 // Scraped data
 adminRouter.get("/scraped", listScraped);

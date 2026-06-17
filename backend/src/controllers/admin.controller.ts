@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
-import { r2PublicUrl, fetchR2Text } from "@/lib/queue/r2";
+import { r2PublicUrl, fetchR2Text, uploadR2 } from "@/lib/queue/r2";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
 
@@ -313,6 +313,79 @@ export async function rerunScrape(req: Request, res: Response): Promise<void> {
     await scrapeQueue.add("scrape", { url }, { jobId });
 
     res.json({ ok: true, message: "Re-scrape queued", jobId, url });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// POST /api/admin/scrape  { url, provider?, force? }
+export async function newScrape(req: Request, res: Response): Promise<void> {
+  try {
+    const { url, provider, force } = req.body as { url?: string; provider?: string; force?: boolean };
+    if (!url || typeof url !== "string") {
+      res.status(400).json({ ok: false, error: "URL is required" });
+      return;
+    }
+
+    let normalizedUrl = url.trim();
+    if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = `https://${normalizedUrl}`;
+
+    const slug = urlToSlug(normalizedUrl);
+    const jobId = `scrape-${slug}`;
+
+    const existingJob = await scrapeQueue.getJob(jobId);
+    if (existingJob && !force) {
+      const state = await existingJob.getState();
+      if (state === "waiting" || state === "active" || state === "delayed") {
+        res.json({ ok: true, jobId, status: state, url: normalizedUrl, message: "Already in progress" });
+        return;
+      }
+    }
+    if (existingJob) {
+      await existingJob.remove().catch(() => undefined);
+    }
+
+    await scrapeQueue.add("scrape", { url: normalizedUrl, provider: provider || "kimi" }, { jobId });
+    res.json({ ok: true, jobId, status: "queued", url: normalizedUrl, slug });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// GET /api/admin/runs/by-slug/:slug/html
+export async function getRunHtml(req: Request, res: Response): Promise<void> {
+  try {
+    const doc = await StyleMdRun.findOne({ slug: req.params.slug })
+      .sort({ createdAt: -1 })
+      .lean() as Record<string, unknown> | null;
+    if (!doc) { res.status(404).json({ ok: false, error: "Run not found" }); return; }
+
+    const r2 = (doc.r2 as Record<string, unknown> | null) ?? null;
+    const htmlKey = r2?.previewHtml as string | null;
+    const html = await fetchR2Text(htmlKey);
+    res.json({ ok: true, html: html ?? "", key: htmlKey });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// PUT /api/admin/runs/by-slug/:slug/html
+export async function updateRunHtml(req: Request, res: Response): Promise<void> {
+  try {
+    const doc = await StyleMdRun.findOne({ slug: req.params.slug })
+      .sort({ createdAt: -1 })
+      .lean() as Record<string, unknown> | null;
+    if (!doc) { res.status(404).json({ ok: false, error: "Run not found" }); return; }
+
+    const r2 = (doc.r2 as Record<string, unknown> | null) ?? null;
+    const htmlKey = r2?.previewHtml as string | null;
+    if (!htmlKey) { res.status(400).json({ ok: false, error: "No preview HTML key on this run" }); return; }
+
+    const { html } = req.body as { html?: string };
+    if (typeof html !== "string") { res.status(400).json({ ok: false, error: "html field is required" }); return; }
+
+    await uploadR2(htmlKey, html, "text/html; charset=utf-8");
+    res.json({ ok: true, message: "HTML updated", key: htmlKey });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

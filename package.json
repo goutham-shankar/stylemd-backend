@@ -10,7 +10,7 @@
     "dev:worker": "NODE_OPTIONS=--dns-result-order=ipv4first tsx watch --tsconfig tsconfig.json backend/src/worker.ts",
     "start": "NODE_ENV=production NODE_OPTIONS=--dns-result-order=ipv4first node dist/backend/src/index.js",
     "start:worker": "NODE_ENV=production NODE_OPTIONS=--dns-result-order=ipv4first node dist/backend/src/worker.js",
-    "build:server": "tsc -p backend/tsconfig.json && tsc-alias -p backend/tsconfig.json && mkdir -p dist/backend/src/views && cp -r backend/src/views/* dist/backend/src/views/ && mkdir -p dist/backend/public && cp -r backend/public/* dist/backend/public/",
+    "build:server": "npx -p typescript tsc -p backend/tsconfig.json && npx tsc-alias -p backend/tsconfig.json && mkdir -p dist/backend/src/views && cp -r backend/src/views/* dist/backend/src/views/ && mkdir -p dist/backend/public && cp -r backend/public/* dist/backend/public/",
     "build:client": "cd backend && vite build",
     "build": "npm run build:server",
     "test": "tsx --test \"lib/stylemd-artifacts/__tests__/*.test.ts\" \"lib/services/__tests__/*.test.ts\" \"scripts/*.test.mjs\"",
