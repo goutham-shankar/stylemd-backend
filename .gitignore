@@ -17,7 +17,7 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 .next
 out
-
+dist/
 # Backend
 backend/dist
 /dist
