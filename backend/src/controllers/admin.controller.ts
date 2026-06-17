@@ -111,6 +111,39 @@ export async function getRunDetail(req: Request, res: Response): Promise<void> {
   }
 }
 
+// GET /api/admin/runs/by-slug/:slug
+export async function getRunBySlug(req: Request, res: Response): Promise<void> {
+  try {
+    const doc = await StyleMdRun.findOne({ slug: req.params.slug })
+      .sort({ createdAt: -1 })
+      .lean() as Record<string, unknown> | null;
+    if (!doc) {
+      res.status(404).json({ ok: false, error: "Run not found" });
+      return;
+    }
+
+    const r2 = (doc.r2 as Record<string, unknown> | null) ?? null;
+    const r2Urls: Record<string, string | null> = {
+      previewHtml: r2PublicUrl(r2?.previewHtml as string | null),
+      designMd: r2PublicUrl(r2?.designMd as string | null),
+      screenshot: r2PublicUrl(r2?.screenshot as string | null),
+      semanticStructure: r2PublicUrl(r2?.semanticStructure as string | null),
+      designTokens: r2PublicUrl(r2?.designTokens as string | null),
+    };
+
+    const designMdText = await fetchR2Text(r2?.designMd as string | null);
+
+    // Also fetch matching scraped data
+    const scraped = await ScrapedData.findOne({ url: doc.url as string })
+      .select("-contentText -rawHtml")
+      .lean();
+
+    res.json({ ok: true, data: { ...doc, r2Urls, designMdText }, scraped: scraped ?? null });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 // DELETE /api/admin/runs/:runId
 export async function deleteRun(req: Request, res: Response): Promise<void> {
   try {

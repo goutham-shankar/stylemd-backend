@@ -4,6 +4,7 @@ import {
   getDashboardStats,
   listRuns,
   getRunDetail,
+  getRunBySlug,
   deleteRun,
   updateRun,
   rerunScrape,
@@ -31,6 +32,7 @@ adminRouter.get("/stats", getDashboardStats);
 
 // Runs
 adminRouter.get("/runs", listRuns);
+adminRouter.get("/runs/by-slug/:slug", getRunBySlug);
 adminRouter.get("/runs/:runId", getRunDetail);
 adminRouter.patch("/runs/:runId", updateRun);
 adminRouter.delete("/runs/:runId", deleteRun);
