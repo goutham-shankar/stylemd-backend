@@ -8,6 +8,8 @@ export type ScrapeJobData = {
    * `websites/{slug}/debug/raw.html`. Off by default to keep R2 lean.
    */
   debugMode?: boolean;
+  /** Firebase UID of the user who triggered this scrape. */
+  userId?: string;
 };
 
 /** R2 keys (not URLs) — resolve via r2PublicUrl() at read time. */

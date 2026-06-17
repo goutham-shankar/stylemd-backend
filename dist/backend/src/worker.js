@@ -50,6 +50,7 @@ async function start() {
             durationMs,
             screenshotDataUrl: result.screenshot,
             debugMode,
+            userId: job.data.userId,
         }).catch((err) => {
             throw new bullmq_1.UnrecoverableError(err instanceof Error ? err.message : String(err));
         });

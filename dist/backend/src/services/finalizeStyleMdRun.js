@@ -52,7 +52,7 @@ async function readRunScreenshot(runDir) {
     }
 }
 async function finalizeStyleMdRun(input) {
-    const { runId, url, durationMs, debugMode = false } = input;
+    const { runId, url, durationMs, debugMode = false, userId } = input;
     const runDir = (0, artifacts_1.getStyleMdRunDir)(runId);
     const slug = (0, runStorage_1.urlToSlug)(url);
     const rendered = await (0, designSystemRenderer_1.renderFromRunDir)(runDir, url);
@@ -146,6 +146,7 @@ async function finalizeStyleMdRun(input) {
             updatedAt: new Date(),
             lastScrapedAt: new Date(),
         },
+        ...(userId ? { $addToSet: { userIds: userId } } : {}),
     }));
     try {
         await (0, promises_1.rm)(runDir, { recursive: true, force: true });

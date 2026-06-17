@@ -257,7 +257,7 @@ export async function browseCollection(req: Request, res: Response): Promise<voi
 export async function updateRun(req: Request, res: Response): Promise<void> {
   try {
     const { runId } = req.params;
-    const allowed = ["title", "description", "status", "error"] as const;
+    const allowed = ["title", "description", "status", "error", "category"] as const;
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in req.body) updates[key] = req.body[key];
@@ -280,6 +280,58 @@ export async function updateRun(req: Request, res: Response): Promise<void> {
     }
 
     res.json({ ok: true, data: doc });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// GET /api/admin/categories
+// Returns distinct category names with run counts, sorted by count desc.
+export async function listCategories(_req: Request, res: Response): Promise<void> {
+  try {
+    const rows = await StyleMdRun.aggregate([
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+    const data = rows.map((r: { _id: string | null; count: number }) => ({
+      name: r._id ?? "Other",
+      count: r.count,
+    }));
+    res.json({ ok: true, data });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// PATCH /api/admin/categories/rename
+// Body: { oldName, newName } — renames a category across all runs.
+export async function renameCategory(req: Request, res: Response): Promise<void> {
+  try {
+    const { oldName, newName } = req.body as { oldName?: string; newName?: string };
+    if (!oldName || !newName || typeof oldName !== "string" || typeof newName !== "string") {
+      res.status(400).json({ ok: false, error: "oldName and newName are required" });
+      return;
+    }
+    const result = await StyleMdRun.updateMany(
+      { category: oldName },
+      { $set: { category: newName.trim() } },
+    );
+    res.json({ ok: true, updated: result.modifiedCount });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// DELETE /api/admin/categories/:name
+// Resets all runs with this category to "Other".
+export async function deleteCategory(req: Request, res: Response): Promise<void> {
+  try {
+    const { name } = req.params;
+    const result = await StyleMdRun.updateMany(
+      { category: name },
+      { $set: { category: "Other" } },
+    );
+    res.json({ ok: true, updated: result.modifiedCount });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

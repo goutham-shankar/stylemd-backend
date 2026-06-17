@@ -35,6 +35,7 @@ export interface FinalizeStyleMdRunInput {
   durationMs: number;
   screenshotDataUrl?: string | null;
   debugMode?: boolean;
+  userId?: string;
 }
 
 export interface R2Doc {
@@ -74,7 +75,7 @@ async function readRunScreenshot(runDir: string): Promise<Buffer | null> {
 }
 
 export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promise<R2Doc> {
-  const { runId, url, durationMs, debugMode = false } = input;
+  const { runId, url, durationMs, debugMode = false, userId } = input;
   const runDir = getStyleMdRunDir(runId);
   const slug = urlToSlug(url);
 
@@ -200,6 +201,7 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
           updatedAt: new Date(),
           lastScrapedAt: new Date(),
         },
+        ...(userId ? { $addToSet: { userIds: userId } } : {}),
       },
     ),
   );

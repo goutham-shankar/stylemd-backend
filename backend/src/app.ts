@@ -9,6 +9,7 @@ import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { router as apiRouter } from "./routes/index";
 import { queueAdminRouter } from "./routes/queueAdmin";
 import { adminRouter } from "./routes/admin";
+import { publicRouter } from "./routes/public";
 import { errorHandler } from "./middleware/errorHandler";
 import { requireAdmin } from "./middleware/requireAdmin";
 
@@ -48,6 +49,9 @@ export function createApp(): express.Application {
     serverAdapter: bullBoardAdapter,
   });
   app.use("/admin/queues", requireAdmin, bullBoardAdapter.getRouter());
+
+  // ── Public API (no auth, or Firebase token only — no role check).
+  app.use("/api/public", publicRouter);
 
   // ── JSON admin API (consolidated + legacy queue admin).
   app.use("/api/admin", adminRouter);

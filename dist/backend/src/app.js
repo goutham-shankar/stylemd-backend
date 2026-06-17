@@ -15,6 +15,7 @@ const scrapeQueue_1 = require("../../lib/queue/scrapeQueue");
 const index_1 = require("./routes/index");
 const queueAdmin_1 = require("./routes/queueAdmin");
 const admin_1 = require("./routes/admin");
+const public_1 = require("./routes/public");
 const errorHandler_1 = require("./middleware/errorHandler");
 const requireAdmin_1 = require("./middleware/requireAdmin");
 function createApp() {
@@ -44,6 +45,8 @@ function createApp() {
         serverAdapter: bullBoardAdapter,
     });
     app.use("/admin/queues", requireAdmin_1.requireAdmin, bullBoardAdapter.getRouter());
+    // ── Public API (no auth, or Firebase token only — no role check).
+    app.use("/api/public", public_1.publicRouter);
     // ── JSON admin API (consolidated + legacy queue admin).
     app.use("/api/admin", admin_1.adminRouter);
     app.use("/api/admin", queueAdmin_1.queueAdminRouter);

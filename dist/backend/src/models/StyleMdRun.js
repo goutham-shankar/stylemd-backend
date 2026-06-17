@@ -53,6 +53,8 @@ const StyleMdRunSchema = new mongoose_1.default.Schema({
     description: { type: String, default: null },
     h1: { type: String, default: null },
     canonical: { type: String, default: null },
+    category: { type: String, default: "Other" },
+    userIds: { type: [String], default: [] },
     // Analytics — small, queryable (KEEP inline)
     designTokens: { type: mongoose_1.default.Schema.Types.Mixed, default: null }, // stylemd-json
     tokenUsage: { type: mongoose_1.default.Schema.Types.Mixed, default: null },

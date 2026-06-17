@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireAdmin } from "../middleware/requireAdmin";
+import { requireAdmin, requireAuth } from "../middleware/requireAdmin";
 import {
   getDashboardStats,
   listRuns,
@@ -17,6 +17,9 @@ import {
   updateScraped,
   listCollections,
   browseCollection,
+  listCategories,
+  renameCategory,
+  deleteCategory,
 } from "../controllers/admin.controller";
 import {
   getQueueStats,
@@ -34,6 +37,10 @@ import {
 } from "../controllers/users.controller";
 
 export const adminRouter = Router();
+
+// /me is accessible to any authenticated user (not just admins).
+// Must be registered BEFORE the global requireAdmin middleware.
+adminRouter.get("/me", requireAuth, getMe);
 
 adminRouter.use(requireAdmin);
 
@@ -53,6 +60,11 @@ adminRouter.post("/runs/:runId/rerun", rerunScrape);
 // New scrape
 adminRouter.post("/scrape", newScrape);
 
+// Categories
+adminRouter.get("/categories", listCategories);
+adminRouter.patch("/categories/rename", renameCategory);
+adminRouter.delete("/categories/:name", deleteCategory);
+
 // Scraped data
 adminRouter.get("/scraped", listScraped);
 adminRouter.get("/scraped/:id", getScrapedDetail);
@@ -63,8 +75,7 @@ adminRouter.delete("/scraped/:id", deleteScraped);
 adminRouter.get("/collections", listCollections);
 adminRouter.get("/collections/:name", browseCollection);
 
-// Users
-adminRouter.get("/me", getMe);
+// Users (/me is already registered above with requireAuth)
 adminRouter.get("/users", listUsers);
 adminRouter.post("/users", createUser);
 adminRouter.patch("/users/:uid/role", updateUserRole);

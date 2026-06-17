@@ -57,6 +57,7 @@ async function start(): Promise<void> {
         durationMs,
         screenshotDataUrl: result.screenshot,
         debugMode,
+        userId: job.data.userId,
       }).catch((err) => {
         throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
       });

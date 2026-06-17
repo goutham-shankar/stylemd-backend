@@ -14,6 +14,9 @@ exports.deleteScraped = deleteScraped;
 exports.listCollections = listCollections;
 exports.browseCollection = browseCollection;
 exports.updateRun = updateRun;
+exports.listCategories = listCategories;
+exports.renameCategory = renameCategory;
+exports.deleteCategory = deleteCategory;
 exports.rerunScrape = rerunScrape;
 exports.newScrape = newScrape;
 exports.getRunHtml = getRunHtml;
@@ -257,7 +260,7 @@ async function browseCollection(req, res) {
 async function updateRun(req, res) {
     try {
         const { runId } = req.params;
-        const allowed = ["title", "description", "status", "error"];
+        const allowed = ["title", "description", "status", "error", "category"];
         const updates = {};
         for (const key of allowed) {
             if (key in req.body)
@@ -273,6 +276,52 @@ async function updateRun(req, res) {
             return;
         }
         res.json({ ok: true, data: doc });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// GET /api/admin/categories
+// Returns distinct category names with run counts, sorted by count desc.
+async function listCategories(_req, res) {
+    try {
+        const rows = await StyleMdRun_1.StyleMdRun.aggregate([
+            { $group: { _id: "$category", count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+        ]);
+        const data = rows.map((r) => ({
+            name: r._id ?? "Other",
+            count: r.count,
+        }));
+        res.json({ ok: true, data });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// PATCH /api/admin/categories/rename
+// Body: { oldName, newName } — renames a category across all runs.
+async function renameCategory(req, res) {
+    try {
+        const { oldName, newName } = req.body;
+        if (!oldName || !newName || typeof oldName !== "string" || typeof newName !== "string") {
+            res.status(400).json({ ok: false, error: "oldName and newName are required" });
+            return;
+        }
+        const result = await StyleMdRun_1.StyleMdRun.updateMany({ category: oldName }, { $set: { category: newName.trim() } });
+        res.json({ ok: true, updated: result.modifiedCount });
+    }
+    catch (err) {
+        res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+}
+// DELETE /api/admin/categories/:name
+// Resets all runs with this category to "Other".
+async function deleteCategory(req, res) {
+    try {
+        const { name } = req.params;
+        const result = await StyleMdRun_1.StyleMdRun.updateMany({ category: name }, { $set: { category: "Other" } });
+        res.json({ ok: true, updated: result.modifiedCount });
     }
     catch (err) {
         res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
