@@ -18,6 +18,7 @@ import {
   listCollections,
   browseCollection,
   listCategories,
+  createCategory,
   renameCategory,
   deleteCategory,
 } from "../controllers/admin.controller";
@@ -62,6 +63,7 @@ adminRouter.post("/scrape", newScrape);
 
 // Categories
 adminRouter.get("/categories", listCategories);
+adminRouter.post("/categories", createCategory);
 adminRouter.patch("/categories/rename", renameCategory);
 adminRouter.delete("/categories/:name", deleteCategory);
 

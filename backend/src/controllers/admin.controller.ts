@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
+import { Category } from "../models/Category";
 import { r2PublicUrl, fetchR2Text, uploadR2 } from "@/lib/queue/r2";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
@@ -287,18 +288,60 @@ export async function updateRun(req: Request, res: Response): Promise<void> {
 
 // GET /api/admin/categories
 // Returns distinct category names with run counts, sorted by count desc.
+// Merges categories from the Category collection with those found on runs.
 export async function listCategories(_req: Request, res: Response): Promise<void> {
   try {
-    const rows = await StyleMdRun.aggregate([
-      { $group: { _id: "$category", count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
+    const [catDocs, rows] = await Promise.all([
+      Category.find({}, { name: 1 }).lean(),
+      StyleMdRun.aggregate([
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+      ]),
     ]);
-    const data = rows.map((r: { _id: string | null; count: number }) => ({
-      name: r._id ?? "Other",
-      count: r.count,
-    }));
+
+    const countMap = new Map<string, number>(
+      rows.map((r: { _id: string | null; count: number }) => [r._id ?? "Other", r.count]),
+    );
+
+    // Collect all unique names from Category collection and existing runs
+    const allNames = new Set<string>();
+    for (const doc of catDocs) allNames.add(doc.name);
+    for (const name of countMap.keys()) allNames.add(name);
+
+    const data = Array.from(allNames)
+      .map((name) => ({ name, count: countMap.get(name) ?? 0 }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
     res.json({ ok: true, data });
   } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// POST /api/admin/categories
+// Body: { name } — creates a new category in the Category collection.
+export async function createCategory(req: Request, res: Response): Promise<void> {
+  try {
+    const { name } = req.body as { name?: string };
+    if (!name || typeof name !== "string" || !name.trim()) {
+      res.status(400).json({ ok: false, error: "name is required" });
+      return;
+    }
+    const trimmed = name.trim();
+
+    // Check if already exists in Category collection
+    const existing = await Category.findOne({ name: trimmed }).lean();
+    if (existing) {
+      res.status(409).json({ ok: false, error: "Category already exists." });
+      return;
+    }
+
+    const doc = await Category.create({ name: trimmed });
+    res.status(201).json({ ok: true, data: { name: doc.name, count: 0 } });
+  } catch (err) {
+    if ((err as { code?: number }).code === 11000) {
+      res.status(409).json({ ok: false, error: "Category already exists." });
+      return;
+    }
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 }
@@ -323,15 +366,18 @@ export async function renameCategory(req: Request, res: Response): Promise<void>
 }
 
 // DELETE /api/admin/categories/:name
-// Resets all runs with this category to "Other".
+// Resets all runs with this category to "Other" and removes it from the Category collection.
 export async function deleteCategory(req: Request, res: Response): Promise<void> {
   try {
     const { name } = req.params;
-    const result = await StyleMdRun.updateMany(
-      { category: name },
-      { $set: { category: "Other" } },
-    );
-    res.json({ ok: true, updated: result.modifiedCount });
+    const [runResult] = await Promise.all([
+      StyleMdRun.updateMany(
+        { category: name },
+        { $set: { category: "Other" } },
+      ),
+      Category.deleteOne({ name }),
+    ]);
+    res.json({ ok: true, updated: runResult.modifiedCount });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
