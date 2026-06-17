@@ -43,18 +43,24 @@ export async function requireAdmin(
 
     // Upsert user in MongoDB on every login.
     // Bootstrap admins always get/keep the admin role.
+    const updateDoc: any = {
+      $set: {
+        email: decoded.email ?? "",
+        name: decoded.name ?? decoded.email ?? "Unknown",
+        photoURL: decoded.picture ?? undefined,
+        lastLoginAt: new Date(),
+      },
+    };
+
+    if (isBootstrapAdmin) {
+      updateDoc.$set.role = "admin";
+    } else {
+      updateDoc.$setOnInsert = { role: "user" };
+    }
+
     const user = await User.findOneAndUpdate(
       { uid: decoded.uid },
-      {
-        $set: {
-          email: decoded.email ?? "",
-          name: decoded.name ?? decoded.email ?? "Unknown",
-          photoURL: decoded.picture ?? undefined,
-          lastLoginAt: new Date(),
-          ...(isBootstrapAdmin ? { role: "admin" } : {}),
-        },
-        $setOnInsert: { role: isBootstrapAdmin ? "admin" : "user" },
-      },
+      updateDoc,
       { upsert: true, new: true },
     );
 
