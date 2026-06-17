@@ -5,10 +5,12 @@ import {
   publicListRuns,
   publicMyRuns,
   publicGetRun,
+  publicListCategories,
 } from "../controllers/public.controller";
 
 export const publicRouter = Router();
 
+publicRouter.get("/categories", publicListCategories);
 publicRouter.post("/scrape", publicScrape);
 publicRouter.get("/runs/mine", publicMyRuns);
 publicRouter.get("/runs/:slug/status", publicRunStatus);

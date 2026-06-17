@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { StyleMdRun } from "../models/StyleMdRun";
+import { Category } from "../models/Category";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { r2PublicUrl, fetchR2Text } from "@/lib/queue/r2";
 import { verifyIdToken } from "../lib/firebaseAdmin";
@@ -193,6 +194,36 @@ export async function publicGetRun(req: Request, res: Response): Promise<void> {
         createdAt: run.createdAt,
       },
     });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// GET /api/public/categories
+// Returns all known categories (from Category collection + runs) with run counts, sorted by count desc.
+export async function publicListCategories(_req: Request, res: Response): Promise<void> {
+  try {
+    const [catDocs, rows] = await Promise.all([
+      Category.find({}, { name: 1 }).lean(),
+      StyleMdRun.aggregate([
+        { $match: { status: "completed", slug: { $ne: null } } },
+        { $group: { _id: "$category", count: { $sum: 1 } } },
+      ]),
+    ]);
+
+    const countMap = new Map<string, number>(
+      rows.map((r) => [r._id ?? "Other", r.count]),
+    );
+
+    const allNames = new Set<string>();
+    for (const doc of catDocs) allNames.add(doc.name);
+    for (const name of countMap.keys()) allNames.add(name);
+
+    const data = Array.from(allNames)
+      .map((name) => ({ name, count: countMap.get(name) ?? 0 }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    res.json({ ok: true, data });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

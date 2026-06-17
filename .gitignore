@@ -24,3 +24,5 @@ backend/dist
 # Admin folder
 admin/
 probe/dist/
+admin/dist
+probe/
