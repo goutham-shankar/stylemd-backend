@@ -13,8 +13,7 @@ import { connection } from "@/lib/queue/redis";
 import { SCRAPE_QUEUE, type ScrapeJobData, type ScrapeJobResult } from "@/lib/queue/types";
 import { PIPELINE_VERSION, STORAGE_VERSION } from "@/lib/queue/r2";
 import { connectDB, safeWrite } from "@/lib/mongodb";
-import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
-import { finalizeStyleMdRun } from "./services/finalizeStyleMdRun";
+import { resolveDesign } from "@/lib/resolvers";
 import { urlToSlug } from "./services/runStorage";
 import { canonicalPageUrl } from "@/lib/services/pageUrlCanonical";
 import { ScrapedData } from "./models/ScrapedData";
@@ -45,26 +44,24 @@ async function start(): Promise<void> {
       );
       await job.updateProgress(5);
 
-      // ── 1. Run pipeline → artifacts land in .playground/<runId>/ ──────────
-      const result = await runSimplifiedStyleMdPipeline(url, provider, job.id!);
-      await job.updateProgress(70);
-
-      // ── 2. Render + upload to R2 + patch Mongo + clean scratch dir ────────
-      const durationMs = Date.now() - t0;
-      const r2Doc = await finalizeStyleMdRun({
-        runId: result.runId,
+      // ── Resolve design via Library → Volt → Scrape waterfall ─────────────
+      const resolved = await resolveDesign({
         url,
-        durationMs,
-        screenshotDataUrl: result.screenshot,
-        debugMode,
+        slug,
+        jobId: job.id!,
+        provider,
         userId: job.data.userId,
+        debugMode,
       }).catch((err) => {
         throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
       });
       await job.updateProgress(100);
-      console.log(`[worker] job=${job.id} done in ${durationMs}ms runId=${result.runId}`);
+      const durationMs = Date.now() - t0;
+      console.log(
+        `[worker] job=${job.id} done in ${durationMs}ms runId=${resolved.runId} source=${resolved.source}`,
+      );
 
-      return { runId: result.runId, r2: r2Doc };
+      return { runId: resolved.runId, r2: resolved.r2 };
     },
     {
       connection,

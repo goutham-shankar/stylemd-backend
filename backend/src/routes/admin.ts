@@ -7,6 +7,7 @@ import {
   getRunBySlug,
   deleteRun,
   updateRun,
+  bulkUpdateRuns,
   rerunScrape,
   newScrape,
   getRunHtml,
@@ -22,6 +23,16 @@ import {
   renameCategory,
   deleteCategory,
 } from "../controllers/admin.controller";
+import {
+  listVoltDesigns,
+  createVoltDesign,
+  updateVoltDesign,
+  deleteVoltDesign,
+  listLibraryEntries,
+  createLibraryEntry,
+  updateLibraryEntry,
+  deleteLibraryEntry,
+} from "../controllers/voltLibrary.controller";
 import {
   getQueueStats,
   listJobs,
@@ -50,6 +61,7 @@ adminRouter.get("/stats", getDashboardStats);
 
 // Runs
 adminRouter.get("/runs", listRuns);
+adminRouter.patch("/runs/bulk", bulkUpdateRuns);
 adminRouter.get("/runs/by-slug/:slug", getRunBySlug);
 adminRouter.get("/runs/by-slug/:slug/html", getRunHtml);
 adminRouter.put("/runs/by-slug/:slug/html", updateRunHtml);
@@ -82,6 +94,18 @@ adminRouter.get("/users", listUsers);
 adminRouter.post("/users", createUser);
 adminRouter.patch("/users/:uid/role", updateUserRole);
 adminRouter.delete("/users/:uid", deleteUser);
+
+// Volt registry
+adminRouter.get("/volt", listVoltDesigns);
+adminRouter.post("/volt", createVoltDesign);
+adminRouter.patch("/volt/:id", updateVoltDesign);
+adminRouter.delete("/volt/:id", deleteVoltDesign);
+
+// Design library
+adminRouter.get("/library", listLibraryEntries);
+adminRouter.post("/library", createLibraryEntry);
+adminRouter.patch("/library/:id", updateLibraryEntry);
+adminRouter.delete("/library/:id", deleteLibraryEntry);
 
 // Queue (re-exports from queueAdmin)
 adminRouter.get("/queues/stats", getQueueStats);

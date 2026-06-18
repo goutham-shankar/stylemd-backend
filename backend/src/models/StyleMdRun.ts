@@ -74,6 +74,12 @@ const StyleMdRunSchema = new mongoose.Schema(
     // R2 keys (NOT URLs)
     r2: { type: R2KeysSchema, default: () => ({}) },
 
+    // Design resolution source
+    source: { type: String, enum: ["library", "volt", "scrape"], default: "scrape", index: true },
+
+    // Admin curation — only featured runs appear in the public library
+    featured: { type: Boolean, default: false, index: true },
+
     // Versioning
     pipelineVersion: { type: String, default: null },
     workerVersion:   { type: String, default: null },

@@ -8,8 +8,9 @@ import { join } from "node:path";
 export function urlToSlug(url: string): string {
   try {
     const { hostname, pathname } = new URL(url);
+    const host = hostname.replace(/^www\./i, "");
     const pathSlug = pathname.replace(/^\/+|\/+$/g, "").replace(/\//g, "_");
-    const base = pathSlug ? `${hostname}_${pathSlug}` : hostname;
+    const base = pathSlug ? `${host}_${pathSlug}` : host;
     return base.replace(/[^a-z0-9_\-\.]/gi, "_").slice(0, 120);
   } catch {
     return url.replace(/[^a-z0-9_\-]/gi, "_").slice(0, 120);

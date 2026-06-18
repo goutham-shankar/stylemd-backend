@@ -4,8 +4,8 @@
     {
       "name": "admin",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "admin", "--", "-p", "3005"],
-      "port": 3005
+      "runtimeArgs": ["run", "dev", "--prefix", "admin", "--", "-p", "3004"],
+      "port": 3004
     }
   ,
     {

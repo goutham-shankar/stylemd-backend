@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { ScrapedData } from "../models/ScrapedData";
 import { Category } from "../models/Category";
-import { r2PublicUrl, fetchR2Text, uploadR2 } from "@/lib/queue/r2";
+import { r2PublicUrl, fetchR2Text, uploadR2, deleteR2, r2KeyFor } from "@/lib/queue/r2";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
 
@@ -148,8 +148,39 @@ export async function getRunBySlug(req: Request, res: Response): Promise<void> {
 // DELETE /api/admin/runs/:runId
 export async function deleteRun(req: Request, res: Response): Promise<void> {
   try {
-    const result = await StyleMdRun.deleteOne({ runId: req.params.runId });
-    res.json({ ok: true, deleted: result.deletedCount });
+    const doc = await StyleMdRun.findOne({ runId: req.params.runId }).lean() as Record<string, unknown> | null;
+    if (!doc) {
+      res.status(404).json({ ok: false, error: "Run not found" });
+      return;
+    }
+
+    const slug = doc.slug as string | null;
+    const r2 = doc.r2 as Record<string, unknown> | null;
+
+    // Delete every stored R2 artifact key, then the manifest (derivable from slug)
+    const r2Keys: (string | null | undefined)[] = r2
+      ? [
+          r2.previewHtml as string,
+          r2.designMd as string,
+          r2.screenshot as string,
+          r2.semanticStructure as string,
+          r2.designTokens as string,
+        ]
+      : [];
+
+    await Promise.allSettled([
+      ...r2Keys.filter(Boolean).map((key) => deleteR2(key as string)),
+      slug ? deleteR2(r2KeyFor(slug, "manifest")) : Promise.resolve(),
+      slug ? deleteR2(r2KeyFor(slug, "rawHtml")) : Promise.resolve(), // debug artifact, best-effort
+    ]);
+
+    // Remove from both collections
+    await Promise.all([
+      StyleMdRun.deleteOne({ runId: req.params.runId }),
+      doc.url ? ScrapedData.deleteOne({ url: doc.url as string }) : Promise.resolve(),
+    ]);
+
+    res.json({ ok: true, deleted: 1 });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
@@ -258,7 +289,7 @@ export async function browseCollection(req: Request, res: Response): Promise<voi
 export async function updateRun(req: Request, res: Response): Promise<void> {
   try {
     const { runId } = req.params;
-    const allowed = ["title", "description", "status", "error", "category"] as const;
+    const allowed = ["title", "description", "status", "error", "category", "featured"] as const;
     const updates: Record<string, unknown> = {};
     for (const key of allowed) {
       if (key in req.body) updates[key] = req.body[key];
@@ -484,6 +515,33 @@ export async function updateRunHtml(req: Request, res: Response): Promise<void> 
 
     await uploadR2(htmlKey, html, "text/html; charset=utf-8");
     res.json({ ok: true, message: "HTML updated", key: htmlKey });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// PATCH /api/admin/runs/bulk
+export async function bulkUpdateRuns(req: Request, res: Response): Promise<void> {
+  try {
+    const { runIds, updates } = req.body as { runIds?: string[]; updates?: Record<string, unknown> };
+    if (!Array.isArray(runIds) || runIds.length === 0) {
+      res.status(400).json({ ok: false, error: "runIds array is required" });
+      return;
+    }
+    const allowed = ["featured", "category", "status"] as const;
+    const safe: Record<string, unknown> = {};
+    for (const key of allowed) {
+      if (updates && key in updates) safe[key] = updates[key];
+    }
+    if (Object.keys(safe).length === 0) {
+      res.status(400).json({ ok: false, error: "No valid fields to update" });
+      return;
+    }
+    const result = await StyleMdRun.updateMany(
+      { runId: { $in: runIds } },
+      { $set: safe },
+    );
+    res.json({ ok: true, modified: result.modifiedCount });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

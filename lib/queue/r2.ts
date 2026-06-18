@@ -137,9 +137,10 @@ export function buildManifest(input: {
   return m;
 }
 
-/** Resolve an R2 key to a public URL via R2_PUBLIC_BASE. */
+/** Resolve an R2 key to a public URL via R2_PUBLIC_BASE. Pass through absolute URLs. */
 export function r2PublicUrl(key: string | null | undefined): string | null {
   if (!key) return null;
+  if (key.startsWith("https://") || key.startsWith("http://")) return key;
   const base = process.env.R2_PUBLIC_BASE;
   if (!base) return null;
   return `${base.replace(/\/+$/, "")}/${key.replace(/^\/+/, "")}`;
@@ -204,6 +205,15 @@ export async function deleteR2(key: string): Promise<void> {
  */
 export async function fetchR2Text(key: string | null | undefined): Promise<string | null> {
   if (!key) return null;
+  // External URL (e.g. volt reference) — fetch directly
+  if (key.startsWith("https://") || key.startsWith("http://")) {
+    try {
+      const resp = await fetch(key, { signal: AbortSignal.timeout(15_000) });
+      return resp.ok ? await resp.text() : null;
+    } catch {
+      return null;
+    }
+  }
   try {
     const bucket = envOrThrow("R2_BUCKET");
     const out = await s3().send(new GetObjectCommand({ Bucket: bucket, Key: key }));

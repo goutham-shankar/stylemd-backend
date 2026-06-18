@@ -36,16 +36,17 @@ export async function publicScrape(req: Request, res: Response): Promise<void> {
   if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = `https://${normalizedUrl}`;
   const slug = urlToSlug(normalizedUrl);
 
-  // Return cached completed run — also associate this user with it
+  // Return cached completed run — only associate user if it was a scrape-sourced run
   const existing = await StyleMdRun.findOne({ slug, status: "completed" })
     .sort({ createdAt: -1 })
     .lean() as Record<string, unknown> | null;
   if (existing) {
-    // Track user association in background (don't await)
-    StyleMdRun.updateOne(
-      { runId: existing["runId"] },
-      { $addToSet: { userIds: uid } },
-    ).catch(() => undefined);
+    if (existing["source"] === "scrape") {
+      StyleMdRun.updateOne(
+        { runId: existing["runId"] },
+        { $addToSet: { userIds: uid } },
+      ).catch(() => undefined);
+    }
     res.json({ ok: true, slug, runId: existing["runId"], status: "completed", cached: true });
     return;
   }
@@ -92,7 +93,8 @@ export async function publicRunStatus(req: Request, res: Response): Promise<void
 export async function publicListRuns(req: Request, res: Response): Promise<void> {
   try {
     const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "24"), 10)));
-    const runs = await StyleMdRun.find({ status: "completed", slug: { $ne: null } })
+    const filter: Record<string, unknown> = { status: "completed", slug: { $ne: null }, featured: true };
+    const runs = await StyleMdRun.find(filter)
       .sort({ createdAt: -1 })
       .limit(limit)
       .select("runId url slug title description category r2 createdAt")
@@ -206,7 +208,7 @@ export async function publicListCategories(_req: Request, res: Response): Promis
     const [catDocs, rows] = await Promise.all([
       Category.find({}, { name: 1 }).lean(),
       StyleMdRun.aggregate([
-        { $match: { status: "completed", slug: { $ne: null } } },
+        { $match: { status: "completed", slug: { $ne: null }, featured: true } },
         { $group: { _id: "$category", count: { $sum: 1 } } },
       ]),
     ]);
