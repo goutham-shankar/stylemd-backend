@@ -67,7 +67,7 @@ export async function listRuns(req: Request, res: Response): Promise<void> {
     const filter: Record<string, unknown> = {};
     if (req.query.status && req.query.status !== "all") filter.status = req.query.status;
     if (req.query.search) {
-      const s = String(req.query.search);
+      const s = String(req.query.search).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       filter.$or = [
         { url: { $regex: s, $options: "i" } },
         { slug: { $regex: s, $options: "i" } },
@@ -265,10 +265,18 @@ export async function listCollections(_req: Request, res: Response): Promise<voi
   }
 }
 
+const BROWSABLE_COLLECTIONS = new Set([
+  "stylemd_runs", "scraped_data", "categories", "users", "design_library",
+]);
+
 // GET /api/admin/collections/:name?page=1&limit=20
 export async function browseCollection(req: Request, res: Response): Promise<void> {
   try {
     const { name } = req.params;
+    if (!BROWSABLE_COLLECTIONS.has(name)) {
+      res.status(403).json({ ok: false, error: `Collection "${name}" is not browsable` });
+      return;
+    }
     const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
     const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "20"), 10)));
     const skip = (page - 1) * limit;
@@ -386,10 +394,16 @@ export async function renameCategory(req: Request, res: Response): Promise<void>
       res.status(400).json({ ok: false, error: "oldName and newName are required" });
       return;
     }
-    const result = await StyleMdRun.updateMany(
-      { category: oldName },
-      { $set: { category: newName.trim() } },
-    );
+    const [result] = await Promise.all([
+      StyleMdRun.updateMany(
+        { category: oldName },
+        { $set: { category: newName.trim() } },
+      ),
+      Category.updateOne(
+        { name: oldName },
+        { $set: { name: newName.trim() } },
+      ),
+    ]);
     res.json({ ok: true, updated: result.modifiedCount });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });

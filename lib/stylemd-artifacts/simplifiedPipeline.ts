@@ -106,6 +106,7 @@ export async function runSimplifiedStyleMdPipeline(
   url: string,
   provider: StyleMdProvider = "kimi",
   forcedRunId?: string,
+  userId?: string,
 ): Promise<{
   runId: string;
   styleMd: string;
@@ -136,6 +137,7 @@ export async function runSimplifiedStyleMdPipeline(
       runId: runIdValue,
       provider: runtime.provider,
       model: runtime.model,
+      userId,
     });
   } catch (e) {
     console.warn("[PIPELINE] early pending persist failed, continuing under unstable network", e);

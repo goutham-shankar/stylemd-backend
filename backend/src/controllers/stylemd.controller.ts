@@ -1,6 +1,5 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { readFile } from "fs/promises";
 import { validateStyleMdProviderCredentials } from "@/lib/stylemd-artifacts/provider";
 import { runSimplifiedStyleMdPipeline } from "@/lib/stylemd-artifacts/simplifiedPipeline";
 import { connectDB, safeWrite } from "@/lib/mongodb";
@@ -81,17 +80,6 @@ const requestSchema = z.object({
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
   force: z.boolean().optional().default(false),
 });
-
-export async function clearCache(_req: Request, res: Response): Promise<void> {
-  try {
-    await safeWrite(() => StyleMdRun.deleteMany({}));
-    res.json({ ok: true, data: { message: "Cache cleared" } });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ ok: false, error: err instanceof Error ? err.message : String(err) });
-  }
-}
 
 export async function runStyleMd(req: Request, res: Response): Promise<void> {
   req.socket.setTimeout(0);
@@ -350,21 +338,3 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
   }
 }
 
-export async function fetchImageAsBase64(req: Request, res: Response): Promise<void> {
-  try {
-    const { path: filePath } = req.body as { path: string };
-    if (!filePath) {
-      res.status(400).json({ ok: false, error: "Missing path" });
-      return;
-    }
-
-    const buffer = await readFile(filePath);
-    const base64 = buffer.toString("base64");
-    const ext = filePath.toLowerCase().endsWith(".png") ? "png" : "jpeg";
-    const mimeType = ext === "png" ? "image/png" : "image/jpeg";
-
-    res.json({ ok: true, data: `data:${mimeType};base64,${base64}` });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
-  }
-}

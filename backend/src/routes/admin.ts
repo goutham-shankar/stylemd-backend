@@ -24,15 +24,11 @@ import {
   deleteCategory,
 } from "../controllers/admin.controller";
 import {
-  listVoltDesigns,
-  createVoltDesign,
-  updateVoltDesign,
-  deleteVoltDesign,
   listLibraryEntries,
   createLibraryEntry,
   updateLibraryEntry,
   deleteLibraryEntry,
-} from "../controllers/voltLibrary.controller";
+} from "../controllers/libraryAdmin.controller";
 import {
   getQueueStats,
   listJobs,
@@ -94,12 +90,6 @@ adminRouter.get("/users", listUsers);
 adminRouter.post("/users", createUser);
 adminRouter.patch("/users/:uid/role", updateUserRole);
 adminRouter.delete("/users/:uid", deleteUser);
-
-// Volt registry
-adminRouter.get("/volt", listVoltDesigns);
-adminRouter.post("/volt", createVoltDesign);
-adminRouter.patch("/volt/:id", updateVoltDesign);
-adminRouter.delete("/volt/:id", deleteVoltDesign);
 
 // Design library
 adminRouter.get("/library", listLibraryEntries);

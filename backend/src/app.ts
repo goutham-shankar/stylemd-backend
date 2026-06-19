@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import path from "node:path";
 import { createBullBoard } from "@bull-board/api";
 import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
@@ -16,7 +17,12 @@ import { requireAdmin } from "./middleware/requireAdmin";
 export function createApp(): express.Application {
   const app = express();
 
-  app.use(cors());
+  app.use(cors({
+    origin: process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
+      : ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3004"],
+    credentials: true,
+  }));
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ extended: true }));
 
@@ -51,6 +57,14 @@ export function createApp(): express.Application {
   app.use("/admin/queues", requireAdmin, bullBoardAdapter.getRouter());
 
   // ── Public API (no auth, or Firebase token only — no role check).
+  const scrapeRateLimit = rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    keyGenerator: (req) => req.headers.authorization?.slice(7) || "anonymous",
+    message: { ok: false, error: "Too many scrape requests — try again in a minute" },
+    validate: { xForwardedForHeader: false },
+  });
+  app.use("/api/public/scrape", scrapeRateLimit);
   app.use("/api/public", publicRouter);
 
   // ── JSON admin API (consolidated + legacy queue admin).

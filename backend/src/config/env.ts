@@ -58,5 +58,11 @@ export const config = {
     return { endpoint, key, secret, bucket, publicBase };
   },
 
-  adminToken: process.env.ADMIN_TOKEN || "",
+  get adminToken() {
+    const token = process.env.ADMIN_TOKEN;
+    if (!token && process.env.NODE_ENV === "production") {
+      throw new Error("ADMIN_TOKEN environment variable is required in production");
+    }
+    return token || "";
+  },
 } as const;

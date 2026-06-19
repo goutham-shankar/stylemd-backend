@@ -11,12 +11,10 @@ import type { KimiCostEstimate, KimiTokenUsage } from "@/lib/services/kimiUsage"
  */
 export function slugFromUrl(url: string): string {
   try {
-    return new URL(url).hostname
-      .replace("www.", "")
-      .replace(".com", "")
-      .replace(".in", "")
-      .replace(".co", "")
-      .replace(/[^a-z0-9]/g, "");
+    let host = new URL(url).hostname;
+    if (host.startsWith("www.")) host = host.slice(4);
+    host = host.replace(/\.[^.]+$/, "");
+    return host.replace(/[^a-z0-9]/g, "") || "unknown";
   } catch {
     return "unknown";
   }
@@ -34,27 +32,29 @@ export async function markStyleMdRunPendingInMongo(input: {
   runId: string;
   provider: string;
   model: string;
+  userId?: string;
 }): Promise<void> {
   const canonUrl = canonicalPageUrl(input.url);
   const slug = slugFromUrl(canonUrl);
 
+  const update: Record<string, unknown> = {
+    $set: {
+      url: canonUrl,
+      slug,
+      runId: input.runId,
+      provider: input.provider,
+      model: input.model,
+      status: "running",
+      updatedAt: new Date(),
+    },
+    $setOnInsert: { createdAt: new Date() },
+  };
+  if (input.userId) {
+    (update as any).$addToSet = { userIds: input.userId };
+  }
+
   await safeWrite(() =>
-    StyleMdRun.updateOne(
-      { runId: input.runId },
-      {
-        $set: {
-          url: canonUrl,
-          slug,
-          runId: input.runId,
-          provider: input.provider,
-          model: input.model,
-          status: "running",
-          updatedAt: new Date(),
-        },
-        $setOnInsert: { createdAt: new Date() },
-      },
-      { upsert: true },
-    ),
+    StyleMdRun.updateOne({ runId: input.runId }, update, { upsert: true }),
   );
 }
 

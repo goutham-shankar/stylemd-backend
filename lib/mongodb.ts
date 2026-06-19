@@ -57,7 +57,10 @@ async function logNetworkDiagnostics(uri: string) {
 export async function connectDB() {
   if (mongoose.connection.readyState === 1) return;
 
-  if (connectingPromise) return connectingPromise;
+  if (connectingPromise) {
+    await connectingPromise;
+    return;
+  }
 
   const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 

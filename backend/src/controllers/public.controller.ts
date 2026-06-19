@@ -140,11 +140,19 @@ export async function publicMyRuns(req: Request, res: Response): Promise<void> {
   }
 
   try {
-    const runs = await StyleMdRun.find({ userIds: uid, status: "completed" })
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .select("runId url slug title description category r2 createdAt")
-      .lean();
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+    const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "20"), 10)));
+    const skip = (page - 1) * limit;
+    const filter: Record<string, unknown> = { userIds: uid };
+    const [runs, total] = await Promise.all([
+      StyleMdRun.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select("runId url slug title description category status r2 createdAt")
+        .lean(),
+      StyleMdRun.countDocuments(filter),
+    ]);
 
     const data = runs.map((r) => {
       const r2 = (r.r2 as Record<string, unknown> | null) ?? {};
@@ -155,12 +163,13 @@ export async function publicMyRuns(req: Request, res: Response): Promise<void> {
         title: r.title ?? null,
         description: r.description ?? null,
         category: (r.category as string | null) ?? "Other",
+        status: (r.status as string) ?? "running",
         screenshot: r2PublicUrl(r2.screenshot as string | null),
         createdAt: r.createdAt,
       };
     });
 
-    res.json({ ok: true, data });
+    res.json({ ok: true, data, total, page, pages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

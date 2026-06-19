@@ -5,8 +5,14 @@ import type { AdminRequest } from "../middleware/requireAdmin";
 
 export async function listUsers(req: Request, res: Response): Promise<void> {
   try {
-    const users = await User.find({}).sort({ createdAt: -1 }).lean();
-    res.json({ ok: true, data: users });
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "50"), 10)));
+    const skip = (page - 1) * limit;
+    const [users, total] = await Promise.all([
+      User.find({}).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      User.countDocuments({}),
+    ]);
+    res.json({ ok: true, data: users, total, page, pages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

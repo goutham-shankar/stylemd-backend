@@ -79,7 +79,8 @@ export const voltResolver: DesignResolver = {
   },
 
   async resolve(ctx) {
-    const voltSlug = (ctx as any)._voltSlug as string;
+    const voltSlug = ((ctx as any)._voltSlug ?? slugFromUrl(ctx.url)) as string;
+    if (!voltSlug) throw new Error(`Cannot derive volt slug from ${ctx.url}`);
     const runId = ctx.jobId;
     const now = new Date();
 

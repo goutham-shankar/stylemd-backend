@@ -11,7 +11,7 @@ export const scrapeResolver: DesignResolver = {
 
   async resolve(ctx) {
     const t0 = Date.now();
-    const result = await runSimplifiedStyleMdPipeline(ctx.url, ctx.provider, ctx.jobId);
+    const result = await runSimplifiedStyleMdPipeline(ctx.url, ctx.provider, ctx.jobId, ctx.userId);
     const durationMs = Date.now() - t0;
 
     const r2Doc = await finalizeStyleMdRun({

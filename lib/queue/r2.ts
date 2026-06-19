@@ -137,12 +137,20 @@ export function buildManifest(input: {
   return m;
 }
 
+let _r2BaseWarned = false;
+
 /** Resolve an R2 key to a public URL via R2_PUBLIC_BASE. Pass through absolute URLs. */
 export function r2PublicUrl(key: string | null | undefined): string | null {
   if (!key) return null;
   if (key.startsWith("https://") || key.startsWith("http://")) return key;
   const base = process.env.R2_PUBLIC_BASE;
-  if (!base) return null;
+  if (!base) {
+    if (!_r2BaseWarned) {
+      console.warn("[r2] R2_PUBLIC_BASE is not set — asset URLs will resolve to null. Set it to your R2 public bucket URL.");
+      _r2BaseWarned = true;
+    }
+    return null;
+  }
   return `${base.replace(/\/+$/, "")}/${key.replace(/^\/+/, "")}`;
 }
 
@@ -180,16 +188,24 @@ export async function uploadR2(
   contentType: string,
 ): Promise<string> {
   const bucket = envOrThrow("R2_BUCKET");
-  await s3().send(
-    new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      Body: body,
-      ContentType: contentType,
-      CacheControl: "public, max-age=31536000, immutable",
-    }),
-  );
-  return key;
+  const cmd = new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+    CacheControl: "public, max-age=31536000, immutable",
+  });
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await s3().send(cmd);
+      return key;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+    }
+  }
+  throw lastErr;
 }
 
 /** Delete an object from R2 (used by migration cleanup, not the worker). */

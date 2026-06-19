@@ -15,11 +15,12 @@ export const libraryResolver: DesignResolver = {
 
   async canResolve(ctx) {
     const entry = await findLibraryEntry(ctx.url);
+    if (entry) (ctx as any)._libraryEntry = entry;
     return Boolean(entry);
   },
 
   async resolve(ctx) {
-    const entry = await findLibraryEntry(ctx.url) as any;
+    const entry = ((ctx as any)._libraryEntry ?? await findLibraryEntry(ctx.url)) as any;
     if (!entry) throw new Error(`No library entry for ${ctx.url}`);
 
     const runId = ctx.jobId;
