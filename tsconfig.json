@@ -12,11 +12,12 @@
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     }
   },
-  "include": ["lib/**/*.ts", "backend/src/**/*.ts"],
+  "include": ["lib/**/*.ts", "backend/src/**/*.ts", "backend/src/**/*.tsx"],
   "exclude": ["node_modules", "backend/node_modules", "dist"]
 }

@@ -64,7 +64,15 @@ export function createApp(): express.Application {
     message: { ok: false, error: "Too many scrape requests — try again in a minute" },
     validate: { xForwardedForHeader: false },
   });
+  const authLinkRateLimit = rateLimit({
+    windowMs: 15 * 60_000,
+    max: 5,
+    keyGenerator: (req) => (req.body as { email?: string })?.email?.toLowerCase() || req.ip || "anonymous",
+    message: { success: true, message: "If an account exists, a sign-in link has been sent." },
+    validate: { xForwardedForHeader: false },
+  });
   app.use("/api/public/scrape", scrapeRateLimit);
+  app.use("/api/public/auth/send-link", authLinkRateLimit);
   app.use("/api/public", publicRouter);
 
   // ── JSON admin API (consolidated + legacy queue admin).

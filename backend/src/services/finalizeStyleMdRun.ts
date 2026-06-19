@@ -28,6 +28,8 @@ import { renderFromRunDir } from "./designSystemRenderer";
 import { urlToSlug } from "./runStorage";
 import { ScrapedData } from "../models/ScrapedData";
 import { StyleMdRun } from "../models/StyleMdRun";
+import { User } from "../models/User";
+import { sendScrapeCompleteEmail } from "./email";
 
 export interface FinalizeStyleMdRunInput {
   runId: string;
@@ -207,6 +209,24 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
       },
     ),
   );
+
+  if (userId) {
+    const user = await User.findOne({ uid: userId }).lean();
+    if (user?.email) {
+      const hostname = (() => {
+        try { return new URL(url).hostname; } catch { return slug; }
+      })();
+      sendScrapeCompleteEmail(user.email, {
+        hostname,
+        slug,
+        screenshotUrl: r2Doc.screenshot,
+        durationMs,
+        completedAt: new Date().toISOString(),
+      }).catch((e) =>
+        console.warn("[finalizeStyleMdRun] scrape-complete email failed:", e instanceof Error ? e.message : e),
+      );
+    }
+  }
 
   try {
     await rm(runDir, { recursive: true, force: true });

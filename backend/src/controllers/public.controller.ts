@@ -6,6 +6,7 @@ import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { r2PublicUrl, fetchR2Text } from "@/lib/queue/r2";
 import { verifyIdToken } from "../lib/firebaseAdmin";
 import { urlToSlug } from "../services/runStorage";
+import { sendWelcomeEmail } from "../services/email";
 
 // POST /api/public/scrape
 // Requires Firebase ID token in Authorization header. Any signed-in user can submit.
@@ -255,6 +256,9 @@ export async function publicAuthSync(req: Request, res: Response): Promise<void>
   try {
     const decoded = await verifyIdToken(idToken);
 
+    const existingUser = await User.findOne({ uid: decoded.uid }).lean();
+    const isNewUser = !existingUser;
+
     const user = await User.findOneAndUpdate(
       { uid: decoded.uid },
       {
@@ -268,6 +272,12 @@ export async function publicAuthSync(req: Request, res: Response): Promise<void>
       },
       { upsert: true, new: true },
     );
+
+    if (isNewUser && user.email) {
+      sendWelcomeEmail(user.email, user.name).catch((e) =>
+        console.warn("[auth/sync] welcome email failed:", e instanceof Error ? e.message : e),
+      );
+    }
 
     res.json({ ok: true, data: { uid: user.uid, email: user.email, name: user.name, role: user.role } });
   } catch {

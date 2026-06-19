@@ -11,7 +11,7 @@
     "target": "ES2020",
     "lib": ["ES2020", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*.ts", "../lib/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "../lib/**/*.ts"],
   "exclude": [
     "node_modules",
     "../node_modules",
