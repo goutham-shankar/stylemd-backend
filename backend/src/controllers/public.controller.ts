@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { Category } from "../models/Category";
+import { User } from "../models/User";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { r2PublicUrl, fetchR2Text } from "@/lib/queue/r2";
 import { verifyIdToken } from "../lib/firebaseAdmin";
@@ -237,5 +238,39 @@ export async function publicListCategories(_req: Request, res: Response): Promis
     res.json({ ok: true, data });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// POST /api/public/auth/sync
+// Called by the probe frontend after Google/email sign-in to persist the user in MongoDB.
+export async function publicAuthSync(req: Request, res: Response): Promise<void> {
+  const header = req.headers.authorization || "";
+  const idToken = header.startsWith("Bearer ") ? header.slice(7) : "";
+
+  if (!idToken) {
+    res.status(401).json({ ok: false, error: "No token" });
+    return;
+  }
+
+  try {
+    const decoded = await verifyIdToken(idToken);
+
+    const user = await User.findOneAndUpdate(
+      { uid: decoded.uid },
+      {
+        $set: {
+          email: decoded.email ?? "",
+          name: decoded.name ?? decoded.email ?? "Unknown",
+          photoURL: decoded.picture ?? undefined,
+          lastLoginAt: new Date(),
+        },
+        $setOnInsert: { role: "user", createdAt: new Date() },
+      },
+      { upsert: true, new: true },
+    );
+
+    res.json({ ok: true, data: { uid: user.uid, email: user.email, name: user.name, role: user.role } });
+  } catch {
+    res.status(401).json({ ok: false, error: "Invalid or expired session" });
   }
 }
