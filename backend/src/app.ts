@@ -8,7 +8,6 @@ import { ExpressAdapter } from "@bull-board/express";
 import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { router as apiRouter } from "./routes/index";
-import { queueAdminRouter } from "./routes/queueAdmin";
 import { adminRouter } from "./routes/admin";
 import { publicRouter } from "./routes/public";
 import { errorHandler } from "./middleware/errorHandler";
@@ -75,9 +74,8 @@ export function createApp(): express.Application {
   app.use("/api/public/auth/send-link", authLinkRateLimit);
   app.use("/api/public", publicRouter);
 
-  // ── JSON admin API (consolidated + legacy queue admin).
+  // ── JSON admin API.
   app.use("/api/admin", adminRouter);
-  app.use("/api/admin", queueAdminRouter);
 
   app.use("/", apiRouter);
   app.use(errorHandler);

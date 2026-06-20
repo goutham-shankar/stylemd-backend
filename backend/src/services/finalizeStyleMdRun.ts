@@ -48,7 +48,7 @@ export interface R2Doc {
   screenshot: string | null;
   semanticStructure: string | null;
   designTokens: string | null;
-  assets: Record<string, never>;
+  assets: Record<string, string>;
 }
 
 function dataUrlToBuffer(dataUrl: string): { buffer: Buffer; contentType: string } | null {

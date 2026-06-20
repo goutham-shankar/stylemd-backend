@@ -293,6 +293,8 @@ export async function browseCollection(req: Request, res: Response): Promise<voi
   }
 }
 
+const VALID_RUN_STATUSES = new Set(["queued", "running", "completed", "failed"]);
+
 // PATCH /api/admin/runs/:runId
 export async function updateRun(req: Request, res: Response): Promise<void> {
   try {
@@ -305,6 +307,11 @@ export async function updateRun(req: Request, res: Response): Promise<void> {
 
     if (Object.keys(updates).length === 0) {
       res.status(400).json({ ok: false, error: "No valid fields to update" });
+      return;
+    }
+
+    if ("status" in updates && !VALID_RUN_STATUSES.has(updates.status as string)) {
+      res.status(400).json({ ok: false, error: `Invalid status. Must be one of: ${[...VALID_RUN_STATUSES].join(", ")}` });
       return;
     }
 
@@ -549,6 +556,10 @@ export async function bulkUpdateRuns(req: Request, res: Response): Promise<void>
     }
     if (Object.keys(safe).length === 0) {
       res.status(400).json({ ok: false, error: "No valid fields to update" });
+      return;
+    }
+    if ("status" in safe && !VALID_RUN_STATUSES.has(safe.status as string)) {
+      res.status(400).json({ ok: false, error: `Invalid status. Must be one of: ${[...VALID_RUN_STATUSES].join(", ")}` });
       return;
     }
     const result = await StyleMdRun.updateMany(

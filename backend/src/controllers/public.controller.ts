@@ -165,7 +165,7 @@ export async function publicMyRuns(req: Request, res: Response): Promise<void> {
         title: r.title ?? null,
         description: r.description ?? null,
         category: (r.category as string | null) ?? "Other",
-        status: (r.status as string) ?? "running",
+        status: (r.status as string) ?? "unknown",
         screenshot: r2PublicUrl(r2.screenshot as string | null),
         createdAt: r.createdAt,
       };

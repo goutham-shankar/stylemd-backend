@@ -17,10 +17,13 @@ export async function sendEmailSignInLink(req: Request, res: Response): Promise<
       url: callbackUrl,
       handleCodeInApp: true,
     });
-
     await sendSignInEmail(trimmed, link);
   } catch (err) {
-    console.error("[auth/send-link]", err instanceof Error ? err.message : err);
+    const msg = err instanceof Error ? err.message : String(err);
+    const source = msg.toLowerCase().includes("resend") || msg.toLowerCase().includes("smtp")
+      ? "Resend"
+      : "Firebase";
+    console.error(`[auth/send-link] ${source} error for ${trimmed}:`, msg);
   }
 
   res.json({ success: true, message: "If an account exists, a sign-in link has been sent." });

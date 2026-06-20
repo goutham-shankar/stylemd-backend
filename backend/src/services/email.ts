@@ -15,8 +15,14 @@ function resend(): Resend {
   return _resend;
 }
 
+let _warnedNoKey = false;
 export function canSend(): boolean {
-  return !!process.env.RESEND_API_KEY;
+  const ok = !!process.env.RESEND_API_KEY;
+  if (!ok && !_warnedNoKey) {
+    _warnedNoKey = true;
+    console.warn("[email] RESEND_API_KEY not set — all emails will be silently skipped");
+  }
+  return ok;
 }
 
 export async function sendSignInEmail(to: string, signInLink: string): Promise<void> {
