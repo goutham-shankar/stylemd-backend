@@ -58,7 +58,10 @@ export async function sendScrapeCompleteEmail(
     completedAt?: string | null;
   },
 ): Promise<void> {
-  if (!canSend()) return;
+  if (!canSend()) {
+    console.warn(`[email] skipping scrape-complete email to ${to} — RESEND_API_KEY not set`);
+    return;
+  }
   const label = site.title || site.hostname;
   const html = await render(ScrapeCompleteEmail(site));
   await resend().emails.send({

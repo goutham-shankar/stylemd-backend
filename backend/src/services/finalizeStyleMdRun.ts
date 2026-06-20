@@ -211,21 +211,29 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
   );
 
   if (userId) {
+    console.log(`[finalizeStyleMdRun] userId=${userId} — looking up user for scrape-complete email`);
     const user = await User.findOne({ uid: userId }).lean();
     if (user?.email) {
       const hostname = (() => {
         try { return new URL(url).hostname; } catch { return slug; }
       })();
+      console.log(`[finalizeStyleMdRun] sending scrape-complete email to ${user.email} for ${hostname}`);
       sendScrapeCompleteEmail(user.email, {
         hostname,
         slug,
         screenshotUrl: r2Doc.screenshot,
         durationMs,
         completedAt: new Date().toISOString(),
+      }).then(() => {
+        console.log(`[finalizeStyleMdRun] scrape-complete email sent to ${user.email}`);
       }).catch((e) =>
-        console.warn("[finalizeStyleMdRun] scrape-complete email failed:", e instanceof Error ? e.message : e),
+        console.error("[finalizeStyleMdRun] scrape-complete email failed:", e instanceof Error ? e.message : e),
       );
+    } else {
+      console.warn(`[finalizeStyleMdRun] user not found or no email for uid=${userId}`);
     }
+  } else {
+    console.log(`[finalizeStyleMdRun] no userId — skipping scrape-complete email`);
   }
 
   try {

@@ -17,6 +17,9 @@ import { resolveDesign } from "@/lib/resolvers";
 import { urlToSlug } from "./services/runStorage";
 import { canonicalPageUrl } from "@/lib/services/pageUrlCanonical";
 import { ScrapedData } from "./models/ScrapedData";
+import { StyleMdRun } from "./models/StyleMdRun";
+import { User } from "./models/User";
+import { sendScrapeCompleteEmail } from "./services/email";
 
 const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "2", 10);
 const LOCK_DURATION = parseInt(process.env.WORKER_LOCK_MS || "300000", 10); // 5 min
@@ -60,6 +63,37 @@ async function start(): Promise<void> {
       console.log(
         `[worker] job=${job.id} done in ${durationMs}ms runId=${resolved.runId} source=${resolved.source}`,
       );
+
+      // Associate userId with the run and send scrape-complete email
+      // (scrapeResolver already does this via finalizeStyleMdRun, but
+      // volt/library resolvers don't — handle it here for all paths)
+      const userId = job.data.userId;
+      if (userId && resolved.source !== "scrape") {
+        safeWrite(() =>
+          StyleMdRun.updateOne(
+            { runId: resolved.runId },
+            { $addToSet: { userIds: userId } },
+          ),
+        ).catch(() => undefined);
+
+        User.findOne({ uid: userId }).lean().then((user) => {
+          if (!user?.email) return;
+          const hostname = (() => {
+            try { return new URL(url).hostname; } catch { return slug; }
+          })();
+          console.log(`[worker] sending scrape-complete email to ${user.email} for ${hostname} (source=${resolved.source})`);
+          sendScrapeCompleteEmail(user.email, {
+            hostname,
+            slug,
+            screenshotUrl: resolved.r2?.screenshot ?? null,
+            durationMs,
+          }).then(() => {
+            console.log(`[worker] scrape-complete email sent to ${user.email}`);
+          }).catch((e) => {
+            console.error(`[worker] scrape-complete email failed:`, e instanceof Error ? e.message : e);
+          });
+        }).catch(() => undefined);
+      }
 
       return { runId: resolved.runId, r2: resolved.r2 };
     },

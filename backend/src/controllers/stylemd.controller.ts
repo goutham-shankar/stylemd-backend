@@ -79,6 +79,7 @@ const requestSchema = z.object({
   url: z.string().url(),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
   force: z.boolean().optional().default(false),
+  userId: z.string().optional(),
 });
 
 export async function runStyleMd(req: Request, res: Response): Promise<void> {
@@ -86,7 +87,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
   res.setTimeout(0);
 
   try {
-    const { url, provider, force } = requestSchema.parse(req.body);
+    const { url, provider, force, userId } = requestSchema.parse(req.body);
     const canonUrl = canonicalPageUrl(url);
     const slug = slugFromUrl(canonUrl);
 
@@ -186,6 +187,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
           url: canonUrl,
           durationMs: Date.now() - startedAt,
           screenshotDataUrl: result.screenshot,
+          userId,
         });
 
         // Reset retry count on success
