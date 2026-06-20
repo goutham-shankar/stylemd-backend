@@ -94,8 +94,14 @@ export async function publicRunStatus(req: Request, res: Response): Promise<void
 // GET /api/public/runs — list completed runs
 export async function publicListRuns(req: Request, res: Response): Promise<void> {
   try {
-    const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "24"), 10)));
-    const filter: Record<string, unknown> = { status: "completed", slug: { $ne: null }, featured: true };
+    const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || "24"), 10)));
+    const excludeSlug = req.query.excludeSlug ? String(req.query.excludeSlug) : null;
+    const filter: Record<string, unknown> = {
+      status: "completed",
+      slug: excludeSlug ? { $nin: [null, excludeSlug] } : { $ne: null },
+      featured: true,
+    };
+    if (req.query.category) filter.category = String(req.query.category);
     const runs = await StyleMdRun.find(filter)
       .sort({ createdAt: -1 })
       .limit(limit)
