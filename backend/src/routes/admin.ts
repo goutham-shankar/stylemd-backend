@@ -37,6 +37,11 @@ import {
   removeJob,
 } from "../controllers/queueAdmin.controller";
 import {
+  listEmails,
+  getEmail,
+  sendTestEmail,
+} from "../controllers/emailAdmin.controller";
+import {
   listUsers,
   createUser,
   updateUserRole,
@@ -103,3 +108,8 @@ adminRouter.get("/queues/jobs", listJobs);
 adminRouter.get("/jobs/:id", getJob);
 adminRouter.post("/jobs/:id/retry", retryJob);
 adminRouter.delete("/jobs/:id", removeJob);
+
+// Emails (Resend)
+adminRouter.get("/emails", (req, res, next) => { listEmails(req, res).catch(next); });
+adminRouter.get("/emails/:id", (req, res, next) => { getEmail(req, res).catch(next); });
+adminRouter.post("/emails/test", (req, res, next) => { sendTestEmail(req, res).catch(next); });
