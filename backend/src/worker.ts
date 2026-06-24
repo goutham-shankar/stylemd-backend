@@ -6,6 +6,8 @@
  * HTTP API process.
  */
 import "dotenv/config";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import mongoose from "mongoose";
 import { Worker, UnrecoverableError } from "bullmq";
 
@@ -63,6 +65,13 @@ async function start(): Promise<void> {
       });
       await job.updateProgress(100);
       const durationMs = Date.now() - t0;
+
+      // Clean up local .playground scratch dir
+      try {
+        const scratchDir = join(process.cwd(), ".playground", "stylemd-artifact-runs", resolved.runId);
+        rmSync(scratchDir, { recursive: true, force: true });
+      } catch { /* best-effort */ }
+
       console.log(
         `[worker] job=${job.id} done in ${durationMs}ms runId=${resolved.runId} source=${resolved.source}`,
       );
