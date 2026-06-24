@@ -11,6 +11,7 @@ export interface ResolverContext {
   userId?: string;
   userEmail?: string;
   debugMode?: boolean;
+  forceScreenshot?: boolean;
 }
 
 export interface ResolveResult {

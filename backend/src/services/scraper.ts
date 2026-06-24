@@ -44,17 +44,15 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
 
-    // networkidle is ideal but never fires on WebSocket/SSE/long-polling sites.
-    // Fall back to load + extra wait so we don't burn 90s on analytics-heavy pages.
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 }).catch(async () => {
-      console.warn(`[SCRAPE] networkidle timed out for ${url}, falling back to load`);
-      await page.waitForLoadState("load", { timeout: 60_000 });
-    });
+    // domcontentloaded fires fast; networkidle can stall 30s on analytics/WS sites.
+    // We compensate with our own settle logic below.
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    // Wait for the load event (images/fonts start), but don't block on networkidle
+    await page.waitForLoadState("load", { timeout: 15_000 }).catch(() => undefined);
 
     // Dismiss cookie / consent / newsletter popups.
-    // Scoped selectors only — avoid broad id*="accept" which can hit unrelated buttons.
+    // All selectors checked in parallel — total cost ≈ one 150ms round-trip, not 19.
     const dismissSelectors = [
-      // Named platform hooks (most reliable, check first)
       '#onetrust-accept-btn-handler',
       '#onetrust-reject-all-handler',
       '.ot-sdk-btn.ot-reject-all',
@@ -62,7 +60,6 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
       '#CybotCookiebotDialogBodyButtonAccept',
       '#CybotCookiebotDialogBodyLevelButtonAccept',
       '[data-testid="cookie-policy-dialog-accept-button"]',
-      // Text matches scoped to cookie/consent/gdpr containers
       '[class*="cookie"] button:text-matches("agree|accept|allow|got it|ok", "i")',
       '[class*="consent"] button:text-matches("agree|accept|allow|got it|ok", "i")',
       '[class*="gdpr"] button:text-matches("agree|accept|allow|got it|ok", "i")',
@@ -70,33 +67,34 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
       '[id*="consent"] button:text-matches("agree|accept|allow|got it|ok", "i")',
       '[class*="cookie"] button:text-matches("reject|decline|refuse|close|no thanks", "i")',
       '[class*="consent"] button:text-matches("reject|decline|refuse|close|no thanks", "i")',
-      // role=dialog close buttons (newsletter/chat overlays)
       '[role="dialog"] button[aria-label*="close" i]',
       '[class*="modal"] button[aria-label*="close" i]',
       '[class*="popup"] button[aria-label*="close" i]',
     ];
 
-    const runDismiss = async (visibilityTimeout: number) => {
-      for (const sel of dismissSelectors) {
-        try {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: visibilityTimeout })) {
-            await el.click({ timeout: 800 });
-            console.log(`[SCRAPE] dismissed overlay via: ${sel}`);
-            await page.waitForTimeout(400);
-          }
-        } catch { /* not found or not clickable — continue */ }
-      }
+    const runDismiss = async () => {
+      // Check all selectors in parallel — each resolves independently
+      await Promise.allSettled(
+        dismissSelectors.map(async (sel) => {
+          try {
+            const el = page.locator(sel).first();
+            if (await el.isVisible({ timeout: 150 })) {
+              await el.click({ timeout: 800 });
+              console.log(`[SCRAPE] dismissed overlay via: ${sel}`);
+            }
+          } catch { /* not present — skip */ }
+        })
+      );
     };
 
-    // First pass — catch banners present at load time
-    await runDismiss(150);
+    // First pass — banners present at load time
+    await runDismiss();
 
-    // Wait for delayed popups (Intercom, Drift, chat widgets inject at 2–5s)
-    await page.waitForTimeout(3000);
+    // Wait for delayed popups (Intercom, Drift usually inject within 1.5s)
+    await page.waitForTimeout(1500);
 
-    // Second pass — catch anything that appeared while waiting
-    await runDismiss(150);
+    // Second pass — anything that appeared while waiting
+    await runDismiss();
 
     // Wait for all web fonts to finish loading
     await page.evaluate(() => document.fonts.ready).catch(() => undefined);

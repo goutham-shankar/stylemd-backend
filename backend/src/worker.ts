@@ -38,6 +38,7 @@ async function start(): Promise<void> {
       const url = canonicalPageUrl(job.data.url);
       const provider = job.data.provider || "kimi";
       const debugMode = job.data.debugMode === true;
+      const forceScreenshot = job.data.forceScreenshot === true;
       const slug = urlToSlug(url);
       const t0 = Date.now();
 
@@ -56,6 +57,7 @@ async function start(): Promise<void> {
         userId: job.data.userId,
         userEmail: job.data.userEmail,
         debugMode,
+        forceScreenshot,
       }).catch((err) => {
         throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
       });

@@ -524,7 +524,7 @@ export async function newScrape(req: Request, res: Response): Promise<void> {
     const userId = (req as AdminRequest).adminUser?.uid;
     const userEmail = (req as AdminRequest).adminUser?.email;
 
-    await scrapeQueue.add("scrape", { url: normalizedUrl, provider: provider || "kimi", userId, userEmail }, { jobId });
+    await scrapeQueue.add("scrape", { url: normalizedUrl, provider: provider || "kimi", userId, userEmail, forceScreenshot: force === true }, { jobId });
     res.json({ ok: true, jobId, status: "queued", url: normalizedUrl, slug });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });

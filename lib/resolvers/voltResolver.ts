@@ -125,25 +125,25 @@ async function captureScreenshot(url: string): Promise<string | null> {
     });
     const page = await context.newPage();
 
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 }).catch(async () => {
-      await page.waitForLoadState("load", { timeout: 60_000 });
-    });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForLoadState("load", { timeout: 15_000 }).catch(() => undefined);
 
     const runDismiss = async () => {
-      for (const sel of DISMISS_SELECTORS) {
-        try {
-          const el = page.locator(sel).first();
-          if (await el.isVisible({ timeout: 150 })) {
-            await el.click({ timeout: 800 });
-            await page.waitForTimeout(400);
-          }
-        } catch { /* not present — continue */ }
-      }
+      await Promise.allSettled(
+        DISMISS_SELECTORS.map(async (sel) => {
+          try {
+            const el = page.locator(sel).first();
+            if (await el.isVisible({ timeout: 150 })) {
+              await el.click({ timeout: 800 });
+            }
+          } catch { /* not present — skip */ }
+        })
+      );
     };
 
     await runDismiss();
-    await page.waitForTimeout(3000); // let delayed popups (Intercom/Drift) appear
-    await runDismiss();              // second pass
+    await page.waitForTimeout(1500);
+    await runDismiss();
 
     await page.evaluate(() => document.fonts.ready).catch(() => undefined);
     await Promise.race([
@@ -238,15 +238,17 @@ export const voltResolver: DesignResolver = {
       console.warn(`[volt] preview fetch failed for ${voltSlug}:`, err instanceof Error ? err.message : String(err));
     }
 
-    // Check if screenshot already exists for this slug
-    const existing = await StyleMdRun.findOne(
-      { slug: ctx.slug, "r2.screenshot": { $ne: null } },
-    ).lean() as any;
+    // Check if screenshot already exists for this slug (skip when forceScreenshot)
+    const existing = ctx.forceScreenshot
+      ? null
+      : await StyleMdRun.findOne(
+          { slug: ctx.slug, "r2.screenshot": { $ne: null } },
+        ).lean() as any;
 
     let screenshotKey: string | null = existing?.r2?.screenshot ?? null;
 
     if (!screenshotKey) {
-      console.log(`[volt] no existing screenshot for ${ctx.slug}, capturing...`);
+      console.log(`[volt] ${ctx.forceScreenshot ? "force-capturing" : "no existing"} screenshot for ${ctx.slug}...`);
       const dataUrl = await captureScreenshot(ctx.url);
       if (dataUrl) {
         const m = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl);

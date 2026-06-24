@@ -8,6 +8,8 @@ export type ScrapeJobData = {
    * `websites/{slug}/debug/raw.html`. Off by default to keep R2 lean.
    */
   debugMode?: boolean;
+  /** When true, volt resolver captures a fresh screenshot even if one exists in R2. */
+  forceScreenshot?: boolean;
   /** Firebase UID of the user who triggered this scrape. */
   userId?: string;
   userEmail?: string;
