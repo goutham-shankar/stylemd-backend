@@ -47,23 +47,30 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     // Wait for network to go fully quiet so lazy assets and fonts load
     await page.goto(url, { waitUntil: "networkidle", timeout: 90_000 });
 
-    // Dismiss cookie / consent / newsletter popups by clicking common CTA patterns
+    // Dismiss cookie / consent / newsletter popups — try all selectors, don't stop at first
     const dismissSelectors = [
-      // Text-based matches (case-insensitive via :text-matches)
-      'button:text-matches("reject all|decline all|decline cookies|refuse all|close|dismiss|no thanks|not now|skip", "i")',
-      'a:text-matches("reject all|decline all|refuse all|close|dismiss|no thanks", "i")',
-      // Common class/id patterns
-      '[class*="cookie"] button[class*="reject"], [class*="cookie"] button[class*="decline"]',
-      '[id*="cookie"] button[class*="reject"], [id*="cookie"] button[class*="decline"]',
-      '[class*="consent"] button[class*="reject"], [class*="consent"] button[class*="decline"]',
-      '[class*="gdpr"] button[class*="reject"]',
-      // OneTrust / TrustArc / Cookiebot
+      // Specific platform hooks first (most reliable)
+      '#onetrust-accept-btn-handler',
       '#onetrust-reject-all-handler',
       '.ot-sdk-btn.ot-reject-all',
       '#truste-consent-button',
+      '#CybotCookiebotDialogBodyButtonAccept',
+      '#CybotCookiebotDialogBodyLevelButtonAccept',
+      '[data-testid="cookie-policy-dialog-accept-button"]',
+      // Text-based — accept/agree/close patterns
+      'button:text-matches("^(agree|accept|accept all|accept cookies|allow all|allow cookies|got it|ok|i accept|i agree|i understand|confirm)$", "i")',
+      'button:text-matches("reject all|decline all|decline cookies|refuse all|close|dismiss|no thanks|not now|skip", "i")',
+      'a:text-matches("^(agree|accept|accept all|got it|close|dismiss|no thanks)$", "i")',
+      // Class/id patterns
+      'button[id*="accept"], button[id*="agree"]',
       'button[id*="reject"], button[id*="decline"]',
-      // Newsletter / chat overlays — close buttons
-      '[class*="modal"] button[aria-label*="close" i], [class*="modal"] button[aria-label*="dismiss" i]',
+      '[class*="cookie"] button[class*="accept"], [class*="cookie"] button[class*="agree"]',
+      '[class*="cookie"] button[class*="reject"], [class*="cookie"] button[class*="decline"]',
+      '[class*="consent"] button[class*="accept"], [class*="consent"] button[class*="agree"]',
+      '[class*="consent"] button[class*="reject"], [class*="consent"] button[class*="decline"]',
+      '[class*="gdpr"] button',
+      // Generic dialog close buttons
+      '[class*="modal"] button[aria-label*="close" i]',
       '[class*="popup"] button[aria-label*="close" i]',
       '[role="dialog"] button[aria-label*="close" i]',
     ];
@@ -71,57 +78,34 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     for (const sel of dismissSelectors) {
       try {
         const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 500 })) {
-          await el.click({ timeout: 1000 });
+        if (await el.isVisible({ timeout: 400 })) {
+          await el.click({ timeout: 800 });
           console.log(`[SCRAPE] dismissed overlay via: ${sel}`);
-          await page.waitForTimeout(400);
-          break; // one dismissal is usually enough
+          await page.waitForTimeout(500);
         }
       } catch { /* not found or not clickable — continue */ }
     }
 
-    // Scroll the full page height once to trigger lazy-loaded images and animations
-    const pageHeight = await page.evaluate(() => document.body.scrollHeight);
-    const viewportHeight = 900;
-    const steps = Math.ceil(pageHeight / viewportHeight);
-    for (let i = 1; i <= steps; i++) {
-      await page.evaluate((y) => window.scrollTo({ top: y, behavior: "smooth" }), i * viewportHeight);
-      await page.waitForTimeout(120);
-    }
-    // Scroll back to top, then nudge down slightly so scroll-triggered navbars
-    // (which hide at scrollY=0 and reveal after a few pixels) become visible.
-    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-    await page.waitForTimeout(300);
-    await page.evaluate(() => window.scrollTo({ top: 150, behavior: "smooth" }));
-    await page.waitForTimeout(600); // let navbar CSS transition finish
+    // Wait for fonts and images to settle after networkidle
+    await page.waitForTimeout(3000);
 
-    // Force the top-level navbar/header visible (opacity/transform hacks), but
-    // deliberately skip nested elements to avoid revealing mega-menu dropdowns.
+    // Wait until every <img> in the viewport is fully decoded
     await page.evaluate(() => {
-      const selectors = ["header", "nav", "[class*='nav']", "[class*='header']", "[id*='nav']", "[id*='header']"];
-      for (const sel of selectors) {
-        document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
-          const style = window.getComputedStyle(el);
-          if (style.position !== "fixed" && style.position !== "sticky") return;
-          // Skip elements nested inside another header/nav — those are dropdowns
-          let parent = el.parentElement;
-          while (parent && parent !== document.body) {
-            const tag = parent.tagName.toLowerCase();
-            const cls = (parent.className || "").toLowerCase();
-            if (tag === "nav" || tag === "header" || cls.includes("nav") || cls.includes("header")) return;
-            parent = parent.parentElement;
-          }
-          el.style.opacity = "1";
-          el.style.transform = "none";
-          el.style.visibility = "visible";
-        });
-      }
-    });
+      const imgs = Array.from(document.images);
+      return Promise.all(
+        imgs.map((img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                img.addEventListener("load", () => resolve(), { once: true });
+                img.addEventListener("error", () => resolve(), { once: true });
+              })
+        )
+      );
+    }).catch(() => undefined); // never block the screenshot on a broken image
 
-    // Close any open mega-menus/dropdowns: press Escape and move mouse to page center
-    await page.keyboard.press("Escape");
-    await page.mouse.move(720, 450);
-    await page.waitForTimeout(400);
+    // Also wait for all web fonts to finish loading
+    await page.evaluate(() => document.fonts.ready).catch(() => undefined);
 
     // Take JPEG screenshot entirely in-memory — no file paths, no disk writes
     const buffer = await page.screenshot({ type: "jpeg", quality: 80, fullPage: false });
