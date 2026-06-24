@@ -166,7 +166,7 @@ async function captureScreenshot(url: string): Promise<string | null> {
       new Promise<void>((resolve) => setTimeout(resolve, 5000)),
     ]);
 
-    const buffer = await page.screenshot({ type: "jpeg", quality: 60, fullPage: false });
+    const buffer = await page.screenshot({ type: "jpeg", quality: 60, fullPage: true });
     const compressed = await sharp(buffer)
       .resize({ width: 1440, withoutEnlargement: true })
       .jpeg({ quality: 75 })

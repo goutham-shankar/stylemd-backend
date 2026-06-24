@@ -124,7 +124,7 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     ]);
 
     // Take JPEG screenshot entirely in-memory — no file paths, no disk writes
-    const buffer = await page.screenshot({ type: "jpeg", quality: 80, fullPage: false });
+    const buffer = await page.screenshot({ type: "jpeg", quality: 80, fullPage: true });
 
     // VALIDATE buffer
     if (!buffer || buffer.length === 0) {
