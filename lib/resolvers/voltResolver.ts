@@ -38,6 +38,9 @@ function sanitizeVoltHtml(html: string): string {
     "$1getmd.design$2",
   );
 
+  // ── 4. Remove GitHub links/buttons from the nav ───────────────────────────
+  out = out.replace(/<a\s[^>]*href="[^"]*github\.com[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "");
+
   return out;
 }
 
