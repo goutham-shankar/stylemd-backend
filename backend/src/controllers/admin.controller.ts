@@ -6,6 +6,7 @@ import { Category } from "../models/Category";
 import { r2PublicUrl, fetchR2Text, uploadR2, deleteR2, r2KeyFor } from "@/lib/queue/r2";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
+import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageUrlCanonical";
 import type { AdminRequest } from "../middleware/requireAdmin";
 
 
@@ -484,17 +485,38 @@ export async function newScrape(req: Request, res: Response): Promise<void> {
     let normalizedUrl = url.trim();
     if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = `https://${normalizedUrl}`;
 
-    const slug = urlToSlug(normalizedUrl);
+    const canonUrl = canonicalPageUrl(normalizedUrl);
+    const slug = urlToSlug(canonUrl);
     const jobId = `scrape-${slug}`;
 
+    // Check BullMQ — skip if already waiting/active/delayed
     const existingJob = await scrapeQueue.getJob(jobId);
     if (existingJob && !force) {
       const state = await existingJob.getState();
       if (state === "waiting" || state === "active" || state === "delayed") {
-        res.json({ ok: true, jobId, status: state, url: normalizedUrl, message: "Already in progress" });
+        res.json({ ok: true, jobId, status: state, url: canonUrl, message: "Already in progress" });
         return;
       }
     }
+
+    // Check MongoDB — skip if already completed with R2 artifacts
+    if (!force) {
+      const urlVariants = pageUrlVariantsForLookup(canonUrl);
+      const existing = await StyleMdRun.findOne({ url: { $in: urlVariants } })
+        .sort({ createdAt: -1 })
+        .lean() as any;
+      const r2 = existing?.r2 ?? null;
+      const isValid = Boolean(
+        existing &&
+          (existing.status === "completed" || existing.status === "completed_with_warnings") &&
+          (r2?.previewHtml || r2?.designMd),
+      );
+      if (isValid) {
+        res.json({ ok: true, jobId, status: "skipped", url: canonUrl, message: "Already completed", runId: existing.runId });
+        return;
+      }
+    }
+
     if (existingJob) {
       await existingJob.remove().catch(() => undefined);
     }
