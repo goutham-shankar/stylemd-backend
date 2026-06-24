@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   publicScrape,
   publicRunStatus,
+  publicRunEvents,
   publicListRuns,
   publicMyRuns,
   publicGetRun,
@@ -18,5 +19,6 @@ publicRouter.post("/auth/sync", publicAuthSync);
 publicRouter.post("/scrape", publicScrape);
 publicRouter.get("/runs/mine", publicMyRuns);
 publicRouter.get("/runs/:slug/status", publicRunStatus);
+publicRouter.get("/runs/:slug/events", publicRunEvents);
 publicRouter.get("/runs/:slug", publicGetRun);
 publicRouter.get("/runs", publicListRuns);

@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { StyleMdRun } from "../models/StyleMdRun";
 import { Category } from "../models/Category";
 import { User } from "../models/User";
-import { scrapeQueue } from "@/lib/queue/scrapeQueue";
+import { scrapeQueue, scrapeQueueEvents } from "@/lib/queue/scrapeQueue";
 import { r2PublicUrl, fetchR2Text } from "@/lib/queue/r2";
 import { verifyIdToken } from "../lib/firebaseAdmin";
 import { urlToSlug } from "../services/runStorage";
@@ -91,15 +91,94 @@ export async function publicRunStatus(req: Request, res: Response): Promise<void
   }
 }
 
+// GET /api/public/runs/:slug/events — SSE stream for real-time job progress
+export async function publicRunEvents(req: Request, res: Response): Promise<void> {
+  const { slug } = req.params;
+  const jobId = `scrape-${slug}`;
+
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  const send = (event: string, data: Record<string, unknown>) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  // Check if already completed/failed before listening
+  const run = await StyleMdRun.findOne({ slug }).sort({ createdAt: -1 }).lean() as Record<string, unknown> | null;
+  if (run && (run["status"] === "completed" || run["status"] === "completed_with_warnings")) {
+    send("completed", { slug, status: "completed" });
+    res.end();
+    return;
+  }
+  if (run && run["status"] === "failed") {
+    send("failed", { slug, status: "failed" });
+    res.end();
+    return;
+  }
+
+  const job = await scrapeQueue.getJob(jobId);
+  if (job) {
+    const state = await job.getState();
+    send("status", { slug, status: state, progress: job.progress });
+    if (state === "completed") { res.end(); return; }
+    if (state === "failed") { send("failed", { slug, status: "failed" }); res.end(); return; }
+  } else {
+    send("status", { slug, status: "not_found" });
+  }
+
+  const heartbeat = setInterval(() => { res.write(": ping\n\n"); }, 15_000);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onProgress = ({ jobId: jid, data }: { jobId: string; data: any }) => {
+    if (jid !== jobId) return;
+    send("progress", { slug, progress: data });
+  };
+  const onCompleted = ({ jobId: jid }: { jobId: string }) => {
+    if (jid !== jobId) return;
+    send("completed", { slug, status: "completed" });
+    cleanup();
+  };
+  const onFailed = ({ jobId: jid, failedReason }: { jobId: string; failedReason: string }) => {
+    if (jid !== jobId) return;
+    send("failed", { slug, status: "failed", error: failedReason });
+    cleanup();
+  };
+
+  scrapeQueueEvents.on("progress", onProgress);
+  scrapeQueueEvents.on("completed", onCompleted);
+  scrapeQueueEvents.on("failed", onFailed);
+
+  const cleanup = () => {
+    clearInterval(heartbeat);
+    scrapeQueueEvents.off("progress", onProgress);
+    scrapeQueueEvents.off("completed", onCompleted);
+    scrapeQueueEvents.off("failed", onFailed);
+    res.end();
+  };
+
+  // 2 minute timeout — don't keep SSE open forever
+  const timeout = setTimeout(cleanup, 120_000);
+
+  res.on("close", () => {
+    clearTimeout(timeout);
+    clearInterval(heartbeat);
+    scrapeQueueEvents.off("progress", onProgress);
+    scrapeQueueEvents.off("completed", onCompleted);
+    scrapeQueueEvents.off("failed", onFailed);
+  });
+}
+
 // GET /api/public/runs — list completed runs
 export async function publicListRuns(req: Request, res: Response): Promise<void> {
   try {
     const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || "24"), 10)));
     const excludeSlug = req.query.excludeSlug ? String(req.query.excludeSlug) : null;
     const filter: Record<string, unknown> = {
-      status: "completed",
+      status: { $in: ["completed", "completed_with_warnings"] },
       slug: excludeSlug ? { $nin: [null, excludeSlug] } : { $ne: null },
-      featured: true,
     };
     if (req.query.category) filter.category = String(req.query.category);
     const runs = await StyleMdRun.find(filter)
@@ -225,7 +304,7 @@ export async function publicListCategories(_req: Request, res: Response): Promis
     const [catDocs, rows] = await Promise.all([
       Category.find({}, { name: 1 }).lean(),
       StyleMdRun.aggregate([
-        { $match: { status: "completed", slug: { $ne: null }, featured: true } },
+        { $match: { status: { $in: ["completed", "completed_with_warnings"] }, slug: { $ne: null } } },
         { $group: { _id: "$category", count: { $sum: 1 } } },
       ]),
     ]);

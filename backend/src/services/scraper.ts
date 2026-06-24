@@ -1,7 +1,14 @@
 import * as cheerio from "cheerio";
 import { chromium } from "playwright";
 import { NormalizedData } from "./normalize";
-import { getPlaywrightLaunchOptions } from "@/lib/stylemd-artifacts/helpers";
+import {
+  getPlaywrightLaunchOptions,
+  injectStealth,
+  dismissOverlays,
+  hideJunkBeforeScreenshot,
+  scrollAndSettle,
+  waitForAssets,
+} from "@/lib/stylemd-artifacts/helpers";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,83 +50,16 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     browser = await chromium.launch(getPlaywrightLaunchOptions());
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
+    await injectStealth(page);
 
-    // domcontentloaded fires fast; networkidle can stall 30s on analytics/WS sites.
-    // We compensate with our own settle logic below.
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    // Wait for the load event (images/fonts start), but don't block on networkidle
     await page.waitForLoadState("load", { timeout: 15_000 }).catch(() => undefined);
 
-    // Dismiss cookie / consent / newsletter popups.
-    // All selectors checked in parallel — total cost ≈ one 150ms round-trip, not 19.
-    const dismissSelectors = [
-      '#onetrust-accept-btn-handler',
-      '#onetrust-reject-all-handler',
-      '.ot-sdk-btn.ot-reject-all',
-      '#truste-consent-button',
-      '#CybotCookiebotDialogBodyButtonAccept',
-      '#CybotCookiebotDialogBodyLevelButtonAccept',
-      '[data-testid="cookie-policy-dialog-accept-button"]',
-      '[class*="cookie"] button:text-matches("agree|accept|allow|got it|ok", "i")',
-      '[class*="consent"] button:text-matches("agree|accept|allow|got it|ok", "i")',
-      '[class*="gdpr"] button:text-matches("agree|accept|allow|got it|ok", "i")',
-      '[id*="cookie"] button:text-matches("agree|accept|allow|got it|ok", "i")',
-      '[id*="consent"] button:text-matches("agree|accept|allow|got it|ok", "i")',
-      '[class*="cookie"] button:text-matches("reject|decline|refuse|close|no thanks", "i")',
-      '[class*="consent"] button:text-matches("reject|decline|refuse|close|no thanks", "i")',
-      '[role="dialog"] button[aria-label*="close" i]',
-      '[class*="modal"] button[aria-label*="close" i]',
-      '[class*="popup"] button[aria-label*="close" i]',
-    ];
-
-    const runDismiss = async () => {
-      // Check all selectors in parallel — each resolves independently
-      await Promise.allSettled(
-        dismissSelectors.map(async (sel) => {
-          try {
-            const el = page.locator(sel).first();
-            if (await el.isVisible({ timeout: 150 })) {
-              await el.click({ timeout: 800 });
-              console.log(`[SCRAPE] dismissed overlay via: ${sel}`);
-            }
-          } catch { /* not present — skip */ }
-        })
-      );
-    };
-
-    // First pass — banners present at load time
-    await runDismiss();
-
-    // Wait for delayed popups (Intercom, Drift usually inject within 1.5s)
-    await page.waitForTimeout(1500);
-
-    // Second pass — anything that appeared while waiting
-    await runDismiss();
-
-    // Wait for all web fonts to finish loading
-    await page.evaluate(() => document.fonts.ready).catch(() => undefined);
-
-    // Wait until every visible <img> is fully decoded.
-    // Lazy images off-screen never fire load/error, so race against a 5s ceiling.
-    await Promise.race([
-      page.evaluate(() => {
-        const imgs = Array.from(document.images).filter((img) => {
-          const r = img.getBoundingClientRect();
-          return r.top < window.innerHeight && r.bottom > 0; // in viewport only
-        });
-        return Promise.all(
-          imgs.map((img) =>
-            img.complete
-              ? Promise.resolve()
-              : new Promise<void>((resolve) => {
-                  img.addEventListener("load", () => resolve(), { once: true });
-                  img.addEventListener("error", () => resolve(), { once: true });
-                })
-          )
-        );
-      }).catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-    ]);
+    await dismissOverlays(page);
+    await scrollAndSettle(page);
+    await dismissOverlays(page);
+    await hideJunkBeforeScreenshot(page);
+    await waitForAssets(page);
 
     // Take JPEG screenshot entirely in-memory — no file paths, no disk writes
     const buffer = await page.screenshot({ type: "jpeg", quality: 80, fullPage: true });
