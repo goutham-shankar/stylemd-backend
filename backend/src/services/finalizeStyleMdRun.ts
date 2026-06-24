@@ -165,22 +165,53 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
     assets: {},
   };
   let userEmail = input.userEmail;
+  console.log(`[finalizeStyleMdRun] runId=${runId} userEmail=${userEmail ?? "(none)"} userId=${userId ?? "(none)"}`);
+
   if (!userEmail) {
+    // ── Step 1: Check the pending StyleMdRun / ScrapedData docs ──────────
     try {
       const existingRun = await StyleMdRun.findOne({ runId }).select("userEmail").lean<{ userEmail?: string } | null>();
       if (existingRun?.userEmail) {
         userEmail = existingRun.userEmail;
+        console.log(`[finalizeStyleMdRun] resolved email from existing StyleMdRun doc: ${userEmail}`);
       } else {
         const existingScraped = await ScrapedData.findOne({ url }).select("userEmail").lean<{ userEmail?: string } | null>();
         if (existingScraped?.userEmail) {
           userEmail = existingScraped.userEmail;
+          console.log(`[finalizeStyleMdRun] resolved email from existing ScrapedData doc: ${userEmail}`);
         }
       }
     } catch (e) {
       console.warn("[finalizeStyleMdRun] Failed to resolve fallback email from database:", e);
     }
-  }
 
+    // ── Step 2: Resolve from User collection via userId ────────────────
+    // This runs BEFORE the DB write so the email gets persisted on the
+    // completed document and the MongoDB Atlas trigger can find it.
+    if (!userEmail && userId) {
+      try {
+        console.log(`[finalizeStyleMdRun] resolving email from User collection for uid=${userId}`);
+        const user = await User.findOne({ uid: userId }).select("email").lean<{ email?: string } | null>();
+        if (user?.email) {
+          userEmail = user.email;
+          console.log(`[finalizeStyleMdRun] resolved email from User collection: ${userEmail}`);
+        } else {
+          console.warn(`[finalizeStyleMdRun] User not found or has no email for uid=${userId}`);
+        }
+      } catch (e) {
+        console.warn("[finalizeStyleMdRun] Failed to look up user by userId:", e);
+      }
+    }
+
+    if (!userEmail) {
+      console.warn(
+        `[finalizeStyleMdRun] ⚠ No email resolved for runId=${runId}. ` +
+        `Checked: job payload, StyleMdRun doc, ScrapedData doc${userId ? ", User collection" : ""}. ` +
+        `Scrape-complete email will NOT be sent. ` +
+        `Make sure the frontend sends 'Authorization: Bearer <token>' with requests.`
+      );
+    }
+  }
   const versions = {
     pipelineVersion: PIPELINE_VERSION,
     workerVersion: WORKER_VERSION,
@@ -230,37 +261,32 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
     ),
   );
 
-  const triggerEmail = (emailAddr: string) => {
+  const triggerEmail = async (emailAddr: string) => {
     const hostname = (() => {
       try { return new URL(url).hostname; } catch { return slug; }
     })();
-    console.log(`[finalizeStyleMdRun] sending scrape-complete email to ${emailAddr} for ${hostname}`);
-    sendScrapeCompleteEmail(emailAddr, {
-      hostname,
-      slug,
-      screenshotUrl: r2Doc.screenshot,
-      durationMs,
-      completedAt: new Date().toISOString(),
-    }).then(() => {
-      console.log(`[finalizeStyleMdRun] scrape-complete email sent to ${emailAddr}`);
-    }).catch((e) =>
-      console.error("[finalizeStyleMdRun] scrape-complete email failed:", e instanceof Error ? e.message : e),
-    );
+    console.log(`[finalizeStyleMdRun] ✉ triggering scrape-complete email → ${emailAddr} for ${hostname}`);
+    try {
+      await sendScrapeCompleteEmail(emailAddr, {
+        hostname,
+        slug,
+        screenshotUrl: r2Doc.screenshot,
+        durationMs,
+        completedAt: new Date().toISOString(),
+      });
+      console.log(`[finalizeStyleMdRun] ✅ [EMAIL SENT] scrape-complete email delivered to ${emailAddr}`);
+    } catch (e) {
+      console.error(`[finalizeStyleMdRun] ❌ [EMAIL FAILED] scrape-complete email to ${emailAddr}:`, e instanceof Error ? e.message : e);
+    }
   };
 
   if (userEmail) {
-    triggerEmail(userEmail);
-  } else if (userId) {
-    console.log(`[finalizeStyleMdRun] userId=${userId} — looking up user for scrape-complete email`);
-    const user = await User.findOne({ uid: userId }).lean();
-    if (user?.email) {
-      triggerEmail(user.email);
-    } else {
-      console.warn(`[finalizeStyleMdRun] user not found or no email for uid=${userId}`);
-    }
+    await triggerEmail(userEmail);
   } else {
-    console.log(`[finalizeStyleMdRun] no userId or userEmail — skipping scrape-complete email`);
+    // userEmail was already attempted from all fallback sources above
+    console.warn(`[finalizeStyleMdRun] ⚠ Skipping scrape-complete email for runId=${runId} — no email address found.`);
   }
+
 
   try {
     await rm(runDir, { recursive: true, force: true });

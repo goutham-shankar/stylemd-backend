@@ -4,6 +4,9 @@
  *   - designprobe-worker : BullMQ worker (heavy, Playwright + Chromium)
  *
  * Production: pm2 start ecosystem.config.js --env production
+ *
+ * NOTE: PM2 does NOT auto-load .env files unless you set `env_file`.
+ * If RESEND_API_KEY / FIREBASE_* are missing, scrape-complete emails will silently fail.
  */
 module.exports = {
   apps: [
@@ -13,6 +16,8 @@ module.exports = {
       instances: 1,
       exec_mode: "fork",
       max_memory_restart: "800M",
+      // Load .env automatically — avoids "RESEND_API_KEY not set" on production
+      env_file: ".env",
       env_production: {
         NODE_ENV: "production",
         NODE_OPTIONS: "--dns-result-order=ipv4first",
@@ -31,6 +36,8 @@ module.exports = {
       max_memory_restart: "3500M",
       // Give Playwright time to drain before kill.
       kill_timeout: 30000,
+      // Load .env automatically — avoids "RESEND_API_KEY not set" on production
+      env_file: ".env",
       env_production: {
         NODE_ENV: "production",
         NODE_OPTIONS: "--dns-result-order=ipv4first",

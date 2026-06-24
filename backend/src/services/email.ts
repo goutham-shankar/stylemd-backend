@@ -58,16 +58,43 @@ export async function sendScrapeCompleteEmail(
     completedAt?: string | null;
   },
 ): Promise<void> {
+  const tag = `[email:scrape-complete → ${to}]`;
+
+  // ── Step 1: Check RESEND_API_KEY ─────────────────────────────────────────
+  console.log(`${tag} ① checking RESEND_API_KEY…`);
   if (!canSend()) {
-    console.warn(`[email] skipping scrape-complete email to ${to} — RESEND_API_KEY not set`);
+    console.error(`${tag} ✗ RESEND_API_KEY is not set — email skipped. Add it to your .env file.`);
     return;
   }
+  console.log(`${tag} ✓ RESEND_API_KEY present`);
+
+  // ── Step 2: Render HTML template ─────────────────────────────────────────
+  console.log(`${tag} ② rendering HTML template for hostname=${site.hostname}…`);
+  let html: string;
+  try {
+    html = await render(ScrapeCompleteEmail(site));
+    console.log(`${tag} ✓ template rendered (${html.length} bytes)`);
+  } catch (renderErr) {
+    console.error(`${tag} ✗ template render failed:`, renderErr instanceof Error ? renderErr.message : renderErr);
+    throw renderErr;
+  }
+
+  // ── Step 3: Call Resend API ───────────────────────────────────────────────
   const label = site.title || site.hostname;
-  const html = await render(ScrapeCompleteEmail(site));
-  await resend().emails.send({
-    from: FROM,
-    to,
-    subject: `Your DESIGN.md for ${label} is ready ✨`,
-    html,
-  });
+  const subject = `Your DESIGN.md for ${label} is ready ✨`;
+  console.log(`${tag} ③ calling Resend API — from="${FROM}" subject="${subject}"…`);
+  try {
+    const response = await resend().emails.send({ from: FROM, to, subject, html });
+    // Resend SDK returns { data: { id }, error } shape
+    const id = (response as any)?.data?.id ?? (response as any)?.id ?? "(no id returned)";
+    const apiError = (response as any)?.error;
+    if (apiError) {
+      console.error(`${tag} ✗ Resend API returned an error: ${JSON.stringify(apiError)}`);
+      throw new Error(`Resend API error: ${JSON.stringify(apiError)}`);
+    }
+    console.log(`${tag} ✓ email accepted by Resend — messageId=${id}`);
+  } catch (sendErr) {
+    console.error(`${tag} ✗ Resend API call failed:`, sendErr instanceof Error ? sendErr.message : sendErr);
+    throw sendErr;
+  }
 }
