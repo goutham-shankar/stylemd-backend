@@ -9,6 +9,39 @@ import type { DesignResolver, ResolverContext, ResolveResult } from "./types";
 const VOLT_FETCH_TIMEOUT_MS = 15_000;
 const VOLT_BASE = "https://getdesign.md/design-md";
 
+/**
+ * Post-processes HTML fetched from VoltAgent before storing in R2:
+ *  1. Removes the VoltAgent-branded footer (`.footer` block with footer-shell/footer-credit).
+ *  2. Replaces the nav brand text with a getdesign.md link.
+ *  3. Strips any leftover "awesome-design-md" text references.
+ */
+function sanitizeVoltHtml(html: string): string {
+  let out = html;
+
+  // ── 1. Remove the entire VoltAgent footer block ───────────────────────────
+  // Matches <footer class="footer"> ... </footer> (the branded one)
+  out = out.replace(/<footer\s[^>]*class="[^"]*\bfooter\b[^"]*"[^>]*>[\s\S]*?<\/footer>/gi, "");
+
+  // ── 2. Replace nav brand with getmd.design link ────────────────────────────
+  // Pattern A: <span class="nav-brand">anything</span>
+  out = out.replace(
+    /<span\s[^>]*class="[^"]*\bnav-brand\b[^"]*"[^>]*>[\s\S]*?<\/span>/gi,
+    `<a href="https://getmd.design/" target="_blank" rel="noopener noreferrer" class="nav-brand-link" style="text-decoration:none;"><span class="nav-brand">getmd.design</span></a>`,
+  );
+
+  // Pattern B: plain text "awesome-design-md" anywhere else (footer text, titles, etc.)
+  out = out.replace(/awesome-design-md/gi, "getmd.design");
+
+  // ── 3. Fix page <title> if it references awesome-design-md ───────────────
+  out = out.replace(
+    /(<title>[^<]*?)awesome-design-md([^<]*?<\/title>)/gi,
+    "$1getmd.design$2",
+  );
+
+  return out;
+}
+
+
 function slugFromUrl(url: string): string {
   try {
     let host = new URL(url).hostname;
@@ -94,7 +127,8 @@ export const voltResolver: DesignResolver = {
         signal: AbortSignal.timeout(VOLT_FETCH_TIMEOUT_MS),
       });
       if (previewResp.ok) {
-        const html = await previewResp.text();
+        const rawHtml = await previewResp.text();
+        const html = rawHtml && rawHtml.length > 10 ? sanitizeVoltHtml(rawHtml) : rawHtml;
         if (html && html.length > 10) {
           previewHtmlKey = await uploadR2(
             r2KeyFor(ctx.slug, "previewHtml"),

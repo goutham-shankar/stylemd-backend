@@ -55,7 +55,6 @@ export function ScrapeCompleteEmail({
   hostname,
   slug,
   title,
-  screenshotUrl,
   durationMs,
   completedAt,
 }: ScrapeCompleteEmailProps) {
@@ -95,19 +94,6 @@ export function ScrapeCompleteEmail({
               report is ready to explore.
             </Text>
 
-            {/* Screenshot preview */}
-            {screenshotUrl && (
-              <Section style={previewWrap}>
-                <Link href={viewUrl} style={previewLink}>
-                  <Img
-                    src={screenshotUrl}
-                    width="496"
-                    alt={`Preview of ${label}`}
-                    style={previewImg}
-                  />
-                </Link>
-              </Section>
-            )}
 
             {/* Status row */}
             <Section style={statusRow}>
@@ -346,21 +332,6 @@ const siteName: React.CSSProperties = {
   color: "#09090b",
 };
 
-const previewWrap: React.CSSProperties = {
-  marginBottom: "16px",
-};
-
-const previewLink: React.CSSProperties = {
-  display: "block",
-  textDecoration: "none",
-};
-
-const previewImg: React.CSSProperties = {
-  width: "100%",
-  borderRadius: "10px",
-  border: "1px solid #e4e4e7",
-  display: "block",
-};
 
 const statusRow: React.CSSProperties = {
   marginBottom: "20px",
