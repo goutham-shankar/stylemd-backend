@@ -428,11 +428,11 @@ function buildCss(t: SiteTheme): string {
   const bodyFamilyCss = bodyFamily.replace(/"/g, "'");
   const headingFamilyCss = headingFamily.replace(/"/g, "'");
   const headingFontRule = headingFamilyCss !== bodyFamilyCss
-    ? `h1,h2,h3,h4{font-family:'${headingFamilyCss}',serif;}`
+    ? `h1,h2,h3,h4{font-family:${headingFamilyCss},serif;}`
     : "";
 
   return `*{box-sizing:border-box;}
-body{margin:0;font-family:'${bodyFamilyCss}','Helvetica Neue',Arial,sans-serif;background:${pageBg};color:${pageText};-webkit-font-smoothing:antialiased;}
+body{margin:0;font-family:${bodyFamilyCss},'Helvetica Neue',Arial,sans-serif;background:${pageBg};color:${pageText};-webkit-font-smoothing:antialiased;}
 ${headingFontRule}
 .nav{padding:0 48px;height:64px;background:${navBg};border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
 .nav-brand{display:flex;align-items:center;gap:10px;}
@@ -466,16 +466,16 @@ section{padding:80px 48px;max-width:1344px;margin:0 auto;}
 .swatch-contrast{font-size:10px;font-weight:600;margin-top:6px;padding:2px 6px;border-radius:20px;display:inline-block;}
 .contrast-pass{background:#e6f4ea;color:#1e7e34;}
 .contrast-fail{background:#fdecea;color:#c62828;}
-.type-table{width:100%;border-collapse:collapse;background:#ffffff;}
-.type-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:${mutedColor};padding:10px 16px;text-align:left;border-bottom:2px solid #e0e0e0;background:#f9f9f9;}
-.type-table td{padding:18px 16px;border-bottom:1px solid #e8e8e8;vertical-align:middle;background:#ffffff;}
-.type-meta{font-family:'Courier New',monospace;font-size:11px;color:${mutedColor};line-height:1.7;}
-.type-role-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#f0f0f0;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
+.type-table{width:100%;border-collapse:collapse;background:#111111;}
+.type-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.45);padding:10px 16px;text-align:left;border-bottom:2px solid rgba(255,255,255,0.08);background:#0d0d0d;}
+.type-table td{padding:18px 16px;border-bottom:1px solid rgba(255,255,255,0.06);vertical-align:middle;background:#111111;}
+.type-meta{font-family:'Courier New',monospace;font-size:11px;color:rgba(255,255,255,0.45);line-height:1.7;}
+.type-role-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
 .grid-2{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;}
 .grid-3{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:20px;}
-.demo-card{border:1px solid rgba(0,0,0,0.09);border-radius:12px;padding:24px;background:#ffffff;}
-.demo-label{font-size:10px;color:${mutedColor};display:block;margin-bottom:14px;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
-.demo-note{font-size:12px;color:${mutedColor};margin:14px 0 0;line-height:1.5;}
+.demo-card{border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:24px;background:#111111;}
+.demo-label{font-size:10px;color:rgba(255,255,255,0.45);display:block;margin-bottom:14px;font-weight:700;text-transform:uppercase;letter-spacing:1px;}
+.demo-note{font-size:12px;color:rgba(255,255,255,0.4);margin:14px 0 0;line-height:1.5;}
 .nav-demo{background:${navBg};padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;border-radius:8px;}
 .nav-demo-links{display:flex;gap:24px;}
 .nav-demo-links span{font-size:13px;color:${navLinkColor};cursor:pointer;}
@@ -501,22 +501,22 @@ section{padding:80px 48px;max-width:1344px;margin:0 auto;}
 .spacing-label{font-family:'Courier New',monospace;font-size:10px;color:${mutedColor};text-align:center;line-height:1.5;}
 .radius-row{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-end;}
 .radius-item{display:flex;flex-direction:column;align-items:center;gap:10px;}
-.radius-box{width:80px;height:80px;background:#ffffff;border:2px solid ${inkColor};display:flex;align-items:center;justify-content:center;}
-.radius-label{font-family:'Courier New',monospace;font-size:10px;color:${mutedColor};text-align:center;line-height:1.6;}
+.radius-box{width:80px;height:80px;background:#111111;border:2px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;}
+.radius-label{font-family:'Courier New',monospace;font-size:10px;color:rgba(255,255,255,0.45);text-align:center;line-height:1.6;}
 .elevation-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;}
-.elev-card{background:#ffffff;padding:24px;font-size:13px;color:#555;line-height:1.6;}
+.elev-card{background:#111111;padding:24px;font-size:13px;color:rgba(255,255,255,0.65);line-height:1.6;border:1px solid rgba(255,255,255,0.06);}
 .state-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;}
 .motion-row{display:flex;flex-direction:column;gap:16px;}
-.motion-row table{width:100%;border-collapse:collapse;font-size:14px;}
-.motion-row table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:${mutedColor};padding:10px 16px;text-align:left;border-bottom:2px solid #e0e0e0;background:#f9f9f9;}
-.motion-row table td{padding:14px 16px;border-bottom:1px solid #e8e8e8;font-size:13px;color:${pageText};}
+.motion-row table{width:100%;border-collapse:collapse;font-size:14px;background:#111111;}
+.motion-row table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.45);padding:10px 16px;text-align:left;border-bottom:2px solid rgba(255,255,255,0.08);background:#0d0d0d;}
+.motion-row table td{padding:14px 16px;border-bottom:1px solid rgba(255,255,255,0.06);font-size:13px;color:rgba(255,255,255,0.8);background:#111111;}
 .motion-row table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:${primaryOnPage};}
-.responsive-table{width:100%;border-collapse:collapse;font-size:14px;}
-.responsive-table th,.responsive-table td{text-align:left;padding:12px 16px;border-bottom:1px solid #e0e0e0;}
-.responsive-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:${mutedColor};background:#f9f9f9;}
+.responsive-table{width:100%;border-collapse:collapse;font-size:14px;background:#111111;}
+.responsive-table th,.responsive-table td{text-align:left;padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06);}
+.responsive-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.45);background:#0d0d0d;}
 .responsive-table td:first-child{font-family:'Courier New',monospace;font-weight:600;color:${headingColor};}
 .device-ladder{display:flex;gap:16px;align-items:flex-end;margin-top:32px;flex-wrap:wrap;}
-.device-box{background:#ffffff;border:1.5px solid ${inkColor};display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:8px;font-size:10px;font-family:'Courier New',monospace;color:${mutedColor};gap:4px;}
+.device-box{background:#111111;border:1.5px solid rgba(255,255,255,0.15);display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:8px;font-size:10px;font-family:'Courier New',monospace;color:rgba(255,255,255,0.45);gap:4px;}
 .marquee-demo{background:${heroBg};padding:16px 0;overflow:hidden;}
 .marquee-track{display:flex;white-space:nowrap;animation:marquee 18s linear infinite;}
 .marquee-item{font-size:13px;font-weight:700;color:${primaryOnHero};padding:0 28px;letter-spacing:0.5px;}
@@ -707,13 +707,13 @@ function renderTypographySection(scales: TypographyScale[], theme: SiteTheme, co
       const label = isHeading
         ? `Heading &amp; Display · <span style="font-weight:400;">${headingFamilyName}</span>`
         : `Body &amp; UI · <span style="font-weight:400;">${bodyFamilyName}</span>`;
-      groupHeader = `<tr><td colspan="4" style="padding:10px 16px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8d8d8d;background:#f4f4f4;border-top:2px solid #e0e0e0;">${label}</td></tr>`;
+      groupHeader = `<tr><td colspan="4" style="padding:10px 16px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,255,255,0.4);background:#0d0d0d;border-top:2px solid rgba(255,255,255,0.08);">${label}</td></tr>`;
     }
 
     return `${groupHeader}<tr>
   <td><span class="type-role-badge">${role}</span></td>
   <td><div class="type-meta">${familyName}<br>${s.fontSize} / ${s.fontWeight}${lhRatio ? `<br>lh ${lhRatio}` : ""}</div></td>
-  <td><div style="font-family:${familyCss};font-size:${displaySize}px;font-weight:${s.fontWeight};${lhRatio ? `line-height:${lhRatio};` : ""}color:${s.color};">${displaySample}</div></td>
+  <td><div style="background:${theme.pageBg};padding:8px 12px;border-radius:6px;display:inline-block;max-width:100%;"><div style="font-family:${familyCss};font-size:${displaySize}px;font-weight:${s.fontWeight};${lhRatio ? `line-height:${lhRatio};` : ""}color:${s.color};">${displaySample}</div></div></td>
   <td><div class="type-meta">${s.tag.toUpperCase()} element · ${s.usageCount} uses${displaySampleNote}</div></td>
 </tr>`;
   }).join("\n");

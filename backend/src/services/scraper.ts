@@ -94,21 +94,34 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     await page.waitForTimeout(300);
     await page.evaluate(() => window.scrollTo({ top: 150, behavior: "smooth" }));
     await page.waitForTimeout(600); // let navbar CSS transition finish
-    // Force any fixed/sticky elements to be visible in case they used opacity/transform
+
+    // Force the top-level navbar/header visible (opacity/transform hacks), but
+    // deliberately skip nested elements to avoid revealing mega-menu dropdowns.
     await page.evaluate(() => {
       const selectors = ["header", "nav", "[class*='nav']", "[class*='header']", "[id*='nav']", "[id*='header']"];
       for (const sel of selectors) {
         document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
           const style = window.getComputedStyle(el);
-          if (style.position === "fixed" || style.position === "sticky") {
-            el.style.opacity = "1";
-            el.style.transform = "none";
-            el.style.visibility = "visible";
+          if (style.position !== "fixed" && style.position !== "sticky") return;
+          // Skip elements nested inside another header/nav — those are dropdowns
+          let parent = el.parentElement;
+          while (parent && parent !== document.body) {
+            const tag = parent.tagName.toLowerCase();
+            const cls = (parent.className || "").toLowerCase();
+            if (tag === "nav" || tag === "header" || cls.includes("nav") || cls.includes("header")) return;
+            parent = parent.parentElement;
           }
+          el.style.opacity = "1";
+          el.style.transform = "none";
+          el.style.visibility = "visible";
         });
       }
     });
-    await page.waitForTimeout(200);
+
+    // Close any open mega-menus/dropdowns: press Escape and move mouse to page center
+    await page.keyboard.press("Escape");
+    await page.mouse.move(720, 450);
+    await page.waitForTimeout(400);
 
     // Take JPEG screenshot entirely in-memory — no file paths, no disk writes
     const buffer = await page.screenshot({ type: "jpeg", quality: 80, fullPage: false });
