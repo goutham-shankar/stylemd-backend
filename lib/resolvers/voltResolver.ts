@@ -39,7 +39,17 @@ function sanitizeVoltHtml(html: string): string {
   );
 
   // ── 4. Remove GitHub links/buttons from the nav ───────────────────────────
-  out = out.replace(/<a\s[^>]*href="[^"]*github\.com[^"]*"[^>]*>[\s\S]*?<\/a>/gi, "");
+  // Remove <a> tags pointing to github.com (handles both quote styles)
+  out = out.replace(/<a\s[^>]*href=["'][^"']*github\.com[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, "");
+  // CSS fallback — inject before </head>, </body>, or append to end
+  const githubHideStyle = `<style>a[href*="github"]{display:none!important}</style>`;
+  if (/<\/head>/i.test(out)) {
+    out = out.replace(/<\/head>/i, `${githubHideStyle}</head>`);
+  } else if (/<\/body>/i.test(out)) {
+    out = out.replace(/<\/body>/i, `${githubHideStyle}</body>`);
+  } else {
+    out += githubHideStyle;
+  }
 
   return out;
 }
