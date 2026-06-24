@@ -79,12 +79,13 @@ interface SiteContent {
   textSamples: Map<string, string>; // "fontSizePx|fontWeight" → real site copy
   loadedFonts: Array<{ family: string; weights: string[] }>;
   iconLibrary: string | null;
+  fontFaceCss: string; // raw @font-face declarations extracted from site CSS (URLs rewritten to absolute)
 }
 
 const EMPTY_CONTENT: SiteContent = {
   navLinks: [], copyright: null, logoSvg: null, logoUrl: null, brandAssets: [], email: null,
   socialLinks: [], marquee: null, realButtons: [], workCards: [],
-  textSamples: new Map(), loadedFonts: [], iconLibrary: null,
+  textSamples: new Map(), loadedFonts: [], iconLibrary: null, fontFaceCss: "",
 };
 
 interface SiteTheme {
@@ -420,14 +421,19 @@ function sampleForRole(role: string): string {
 function buildCss(t: SiteTheme): string {
   const { primaryHex, primaryFg, pageBg, pageText, navBg, navText, navLinkColor,
     heroBg, heroText, heroTextMuted, headingColor, inkColor,
-    primaryOnPage, primaryOnHero, primaryOnNav, mutedColor, bodyFamily } = t;
+    primaryOnPage, primaryOnHero, primaryOnNav, mutedColor, bodyFamily, headingFamily } = t;
   // Undetected radius renders square — absence of a claim, not an invented token
   const btnRadius = t.btnRadius ?? "0";
   const inputRadius = t.inputRadius ?? "0";
   const bodyFamilyCss = bodyFamily.replace(/"/g, "'");
+  const headingFamilyCss = headingFamily.replace(/"/g, "'");
+  const headingFontRule = headingFamilyCss !== bodyFamilyCss
+    ? `h1,h2,h3,h4{font-family:'${headingFamilyCss}',serif;}`
+    : "";
 
   return `*{box-sizing:border-box;}
-body{margin:0;font-family:${bodyFamilyCss},'Helvetica Neue',Arial,sans-serif;background:${pageBg};color:${pageText};-webkit-font-smoothing:antialiased;}
+body{margin:0;font-family:'${bodyFamilyCss}','Helvetica Neue',Arial,sans-serif;background:${pageBg};color:${pageText};-webkit-font-smoothing:antialiased;}
+${headingFontRule}
 .nav{padding:0 48px;height:64px;background:${navBg};border-bottom:1px solid rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
 .nav-brand{display:flex;align-items:center;gap:10px;}
 .nav-brand-dot{width:28px;height:28px;border-radius:50%;background:${primaryHex};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${primaryFg};}
@@ -669,7 +675,7 @@ function renderTypographySection(scales: TypographyScale[], theme: SiteTheme, co
   const headingFamilyName = formatFontFamily(theme.headingFamily);
   let famNote = bodyFamilyName === headingFamilyName
     ? `Single font family: <strong>${bodyFamilyName}</strong> — used across all roles.`
-    : `Body: <strong>${bodyFamilyName}</strong> · Display: <strong>${headingFamilyName}</strong>.`;
+    : `Body: <strong>${bodyFamilyName}</strong> · Heading: <strong>${headingFamilyName}</strong>.`;
   if (content.loadedFonts.length) {
     const fonts = content.loadedFonts.map((f) => `${f.family} (${f.weights.join(", ")})`).join(" · ");
     famNote += ` Font files loaded by the site: ${fonts}.`;
@@ -686,11 +692,20 @@ function renderTypographySection(scales: TypographyScale[], theme: SiteTheme, co
     const realSample = content.textSamples.get(`${pxToNum(s.fontSize)}|${s.fontWeight}`);
     const sample = realSample ?? sampleForRole(role);
     const sampleNote = realSample ? " · real site copy" : "";
+    const familyCss = `'${familyName}',${["h1","h2","h3"].includes(s.tag) ? "serif" : "sans-serif"}`;
+    // For display/heading roles, always show the font name as the sample so it's
+    // clear which typeface is in use even when a custom font can't be loaded.
+    const displaySample = (role === "Display Hero" || role === "Display" || role === "Heading")
+      ? familyName
+      : (realSample ?? sampleForRole(role));
+    const displaySampleNote = (role === "Display Hero" || role === "Display" || role === "Heading")
+      ? " · font name as sample"
+      : sampleNote;
     return `<tr>
   <td><span class="type-role-badge">${role}</span></td>
   <td><div class="type-meta">${familyName}<br>${s.fontSize} / ${s.fontWeight}${lhRatio ? `<br>lh ${lhRatio}` : ""}</div></td>
-  <td><div style="font-size:${displaySize}px;font-weight:${s.fontWeight};${lhRatio ? `line-height:${lhRatio};` : ""}color:${s.color};">${sample}</div></td>
-  <td><div class="type-meta">${s.tag.toUpperCase()} element · ${s.usageCount} uses${sampleNote}</div></td>
+  <td><div style="font-family:${familyCss};font-size:${displaySize}px;font-weight:${s.fontWeight};${lhRatio ? `line-height:${lhRatio};` : ""}color:${s.color};">${displaySample}</div></td>
+  <td><div class="type-meta">${s.tag.toUpperCase()} element · ${s.usageCount} uses${displaySampleNote}</div></td>
 </tr>`;
   }).join("\n");
 
@@ -1133,14 +1148,38 @@ function renderResponsiveSection(siteUrl: string, breakpoints: BreakpointEntry[]
 // Google Font loader
 // ──────────────────────────────────────────────────────────────────────────────
 
-function buildFontLinkTag(family: string): string {
+// Known custom/premium fonts that are NOT on Google Fonts — must be site-hosted
+const KNOWN_NON_GOOGLE_FONTS = new Set([
+  "born2bsportyfs", "cafe24proup", "dotgothic16", "ppneuemontreal",
+  "recoleta", "cabinetgrotesk", "satoshi", "clashdisplay",
+  "switzer", "generalsans", "neuehaasgrotesk", "aktivgrotesk",
+]);
+
+function isGoogleFontCandidate(family: string): boolean {
   const name = formatFontFamily(family);
   const lower = name.toLowerCase();
   const systemFonts = ["sans-serif", "serif", "monospace", "system-ui", "arial", "helvetica", "georgia", "courier", "verdana", "tahoma", "trebuchet"];
-  if (systemFonts.some((f) => lower.includes(f))) return "";
-  const encoded = name.replace(/ /g, "+");
+  if (systemFonts.some((f) => lower.includes(f))) return false;
+  // Collapse spaces for lookup so "Born2bSporty FS" → "born2bsportyfs"
+  if (KNOWN_NON_GOOGLE_FONTS.has(lower.replace(/\s+/g, ""))) return false;
+  return true;
+}
+
+function buildFontLinkTag(bodyFamily: string, headingFamily: string): string {
+  const seen = new Set<string>();
+  const families: string[] = [];
+  for (const family of [bodyFamily, headingFamily]) {
+    const name = formatFontFamily(family);
+    if (!isGoogleFontCandidate(name) || seen.has(name)) continue;
+    seen.add(name);
+    families.push(name);
+  }
+  if (families.length === 0) return "";
+  const params = families
+    .map((f) => `family=${f.replace(/ /g, "+")}:wght@300;400;500;600;700;800;900`)
+    .join("&");
   return `<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=${encoded}:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">`;
+<link href="https://fonts.googleapis.com/css2?${params}&display=swap" rel="stylesheet">`;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1156,7 +1195,7 @@ export function renderDesignSystemHtml(
 ): string {
   const theme = deriveSiteTheme(analysis);
   const css = buildCss(theme);
-  const fontTag = buildFontLinkTag(theme.bodyFamily);
+  const fontTag = buildFontLinkTag(theme.bodyFamily, theme.headingFamily);
   const siteUrl = (() => { try { return new URL(analysis.url).hostname; } catch { return analysis.url; } })();
   const colorCount = analysis.palette.allObserved.length;
   // Same dedupe key as the typography table so the hero stat matches the rows
@@ -1188,7 +1227,7 @@ export function renderDesignSystemHtml(
   const footerMeta = [
     `Font: ${bodyFamilyName}`,
     content.copyright ?? "",
-    "Generated by Designprobe",
+    "Generated by getmd.design",
   ].filter(Boolean).join(" · ");
 
   return `<!DOCTYPE html>
@@ -1198,7 +1237,7 @@ export function renderDesignSystemHtml(
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Design System — ${siteTitle}</title>
 ${fontTag}
-<style>${css}</style>
+<style>${content.fontFaceCss ? content.fontFaceCss + "\n" : ""}${css}</style>
 </head>
 <body>
 
@@ -1514,7 +1553,7 @@ export function renderDesignMd(
   lines.push("```");
   lines.push("");
   lines.push(`---`);
-  lines.push(`*Generated by Designprobe — all values from live scrape of ${siteUrl}*`);
+  lines.push(`*Generated by getmd.design — all values from live scrape of ${siteUrl}*`);
 
   return lines.join("\n");
 }
@@ -1634,7 +1673,7 @@ async function extractSiteContent(runDir: string): Promise<SiteContent> {
   const content: SiteContent = {
     ...EMPTY_CONTENT,
     navLinks: [], brandAssets: [], socialLinks: [], realButtons: [], workCards: [],
-    textSamples: new Map(), loadedFonts: [],
+    textSamples: new Map(), loadedFonts: [], fontFaceCss: "",
   };
 
   const doms: string[] = [];
@@ -1837,6 +1876,47 @@ async function extractSiteContent(runDir: string): Promise<SiteContent> {
       .slice(0, 4)
       .map(([family, weights]) => ({ family, weights: [...weights].sort() }));
   } catch { /* no manifest */ }
+
+  // Extract @font-face declarations from scraped CSS files so custom/self-hosted
+  // fonts render correctly in the generated HTML. Relative src() URLs are rewritten
+  // to absolute so they resolve from any origin.
+  try {
+    const stylesDir = join(runDir, "page_styles");
+    const cssFiles = (await readdir(stylesDir)).filter((f) => f.endsWith(".css"));
+    const fontFaceBlocks: string[] = [];
+
+    // Try to read the site origin from the manifest or analysis file
+    let siteOrigin = "";
+    try {
+      const analysis = JSON.parse(await readFile(join(runDir, "semantic_analysis.json"), "utf-8"));
+      siteOrigin = new URL(analysis.url as string).origin;
+    } catch { /* ignore */ }
+
+    for (const file of cssFiles) {
+      try {
+        const css = await readFile(join(stylesDir, file), "utf-8");
+        // Extract each @font-face { ... } block
+        const re = /@font-face\s*\{([^}]+)\}/gi;
+        for (const m of css.matchAll(re)) {
+          let block = m[0];
+          // Rewrite relative src() URLs to absolute using the site origin
+          if (siteOrigin) {
+            block = block.replace(/url\(['"]?(?!https?:\/\/|data:)([^'")]+)['"]?\)/gi, (full, path) => {
+              try {
+                const abs = new URL(path, siteOrigin).href;
+                return `url('${abs}')`;
+              } catch {
+                return full;
+              }
+            });
+          }
+          fontFaceBlocks.push(block);
+        }
+      } catch { /* unreadable CSS */ }
+    }
+
+    content.fontFaceCss = fontFaceBlocks.join("\n");
+  } catch { /* no page_styles dir */ }
 
   return content;
 }
