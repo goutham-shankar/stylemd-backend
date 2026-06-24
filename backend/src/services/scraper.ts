@@ -42,11 +42,77 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
   try {
     browser = await chromium.launch(getPlaywrightLaunchOptions());
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // Wait for network to go fully quiet so lazy assets and fonts load
+    await page.goto(url, { waitUntil: "networkidle", timeout: 90_000 });
+
+    // Dismiss cookie / consent / newsletter popups by clicking common CTA patterns
+    const dismissSelectors = [
+      // Text-based matches (case-insensitive via :text-matches)
+      'button:text-matches("reject all|decline all|decline cookies|refuse all|close|dismiss|no thanks|not now|skip", "i")',
+      'a:text-matches("reject all|decline all|refuse all|close|dismiss|no thanks", "i")',
+      // Common class/id patterns
+      '[class*="cookie"] button[class*="reject"], [class*="cookie"] button[class*="decline"]',
+      '[id*="cookie"] button[class*="reject"], [id*="cookie"] button[class*="decline"]',
+      '[class*="consent"] button[class*="reject"], [class*="consent"] button[class*="decline"]',
+      '[class*="gdpr"] button[class*="reject"]',
+      // OneTrust / TrustArc / Cookiebot
+      '#onetrust-reject-all-handler',
+      '.ot-sdk-btn.ot-reject-all',
+      '#truste-consent-button',
+      'button[id*="reject"], button[id*="decline"]',
+      // Newsletter / chat overlays — close buttons
+      '[class*="modal"] button[aria-label*="close" i], [class*="modal"] button[aria-label*="dismiss" i]',
+      '[class*="popup"] button[aria-label*="close" i]',
+      '[role="dialog"] button[aria-label*="close" i]',
+    ];
+
+    for (const sel of dismissSelectors) {
+      try {
+        const el = page.locator(sel).first();
+        if (await el.isVisible({ timeout: 500 })) {
+          await el.click({ timeout: 1000 });
+          console.log(`[SCRAPE] dismissed overlay via: ${sel}`);
+          await page.waitForTimeout(400);
+          break; // one dismissal is usually enough
+        }
+      } catch { /* not found or not clickable — continue */ }
+    }
+
+    // Scroll the full page height once to trigger lazy-loaded images and animations
+    const pageHeight = await page.evaluate(() => document.body.scrollHeight);
+    const viewportHeight = 900;
+    const steps = Math.ceil(pageHeight / viewportHeight);
+    for (let i = 1; i <= steps; i++) {
+      await page.evaluate((y) => window.scrollTo({ top: y, behavior: "smooth" }), i * viewportHeight);
+      await page.waitForTimeout(120);
+    }
+    // Scroll back to top, then nudge down slightly so scroll-triggered navbars
+    // (which hide at scrollY=0 and reveal after a few pixels) become visible.
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.scrollTo({ top: 150, behavior: "smooth" }));
+    await page.waitForTimeout(600); // let navbar CSS transition finish
+    // Force any fixed/sticky elements to be visible in case they used opacity/transform
+    await page.evaluate(() => {
+      const selectors = ["header", "nav", "[class*='nav']", "[class*='header']", "[id*='nav']", "[id*='header']"];
+      for (const sel of selectors) {
+        document.querySelectorAll<HTMLElement>(sel).forEach((el) => {
+          const style = window.getComputedStyle(el);
+          if (style.position === "fixed" || style.position === "sticky") {
+            el.style.opacity = "1";
+            el.style.transform = "none";
+            el.style.visibility = "visible";
+          }
+        });
+      }
+    });
+    await page.waitForTimeout(200);
 
     // Take JPEG screenshot entirely in-memory — no file paths, no disk writes
-    const buffer = await page.screenshot({ type: "jpeg", quality: 80 });
-    
+    const buffer = await page.screenshot({ type: "jpeg", quality: 80, fullPage: false });
+
     // VALIDATE buffer
     if (!buffer || buffer.length === 0) {
       throw new Error(`Failed to capture screenshot for ${url}: empty buffer`);

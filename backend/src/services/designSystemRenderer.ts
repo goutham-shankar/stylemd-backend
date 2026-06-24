@@ -466,9 +466,9 @@ section{padding:80px 48px;max-width:1344px;margin:0 auto;}
 .swatch-contrast{font-size:10px;font-weight:600;margin-top:6px;padding:2px 6px;border-radius:20px;display:inline-block;}
 .contrast-pass{background:#e6f4ea;color:#1e7e34;}
 .contrast-fail{background:#fdecea;color:#c62828;}
-.type-table{width:100%;border-collapse:collapse;}
+.type-table{width:100%;border-collapse:collapse;background:#ffffff;}
 .type-table th{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:${mutedColor};padding:10px 16px;text-align:left;border-bottom:2px solid #e0e0e0;background:#f9f9f9;}
-.type-table td{padding:18px 16px;border-bottom:1px solid #e8e8e8;vertical-align:middle;}
+.type-table td{padding:18px 16px;border-bottom:1px solid #e8e8e8;vertical-align:middle;background:#ffffff;}
 .type-meta{font-family:'Courier New',monospace;font-size:11px;color:${mutedColor};line-height:1.7;}
 .type-role-badge{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#f0f0f0;color:#555;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;}
 .grid-2{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;}
@@ -681,27 +681,36 @@ function renderTypographySection(scales: TypographyScale[], theme: SiteTheme, co
     famNote += ` Font files loaded by the site: ${fonts}.`;
   }
 
+  const headingTags = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+  let lastGroup = "";
   const rows = unique.map((s) => {
     const role = typoRoleLabel(s);
-    const familyName = ["h1", "h2", "h3"].includes(s.tag) ? headingFamilyName : bodyFamilyName;
+    const isHeading = headingTags.has(s.tag);
+    const group = isHeading ? "heading" : "body";
+    const familyName = isHeading ? headingFamilyName : bodyFamilyName;
     const lhNum = pxToNum(s.lineHeight);
-    // Only show line-height when it was actually scraped — never invent one
     const lhRatio = lhNum > 0 && pxToNum(s.fontSize) > 0 ? (lhNum / pxToNum(s.fontSize)).toFixed(2) : null;
     const displaySize = Math.min(pxToNum(s.fontSize), 36);
-    // Prefer real site copy for this size/weight; fall back to pangram
     const realSample = content.textSamples.get(`${pxToNum(s.fontSize)}|${s.fontWeight}`);
-    const sample = realSample ?? sampleForRole(role);
     const sampleNote = realSample ? " · real site copy" : "";
-    const familyCss = `'${familyName}',${["h1","h2","h3"].includes(s.tag) ? "serif" : "sans-serif"}`;
-    // For display/heading roles, always show the font name as the sample so it's
-    // clear which typeface is in use even when a custom font can't be loaded.
+    const familyCss = `'${familyName}',${isHeading ? "serif" : "sans-serif"}`;
     const displaySample = (role === "Display Hero" || role === "Display" || role === "Heading")
       ? familyName
       : (realSample ?? sampleForRole(role));
     const displaySampleNote = (role === "Display Hero" || role === "Display" || role === "Heading")
       ? " · font name as sample"
       : sampleNote;
-    return `<tr>
+
+    let groupHeader = "";
+    if (group !== lastGroup) {
+      lastGroup = group;
+      const label = isHeading
+        ? `Heading &amp; Display · <span style="font-weight:400;">${headingFamilyName}</span>`
+        : `Body &amp; UI · <span style="font-weight:400;">${bodyFamilyName}</span>`;
+      groupHeader = `<tr><td colspan="4" style="padding:10px 16px 6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#8d8d8d;background:#f4f4f4;border-top:2px solid #e0e0e0;">${label}</td></tr>`;
+    }
+
+    return `${groupHeader}<tr>
   <td><span class="type-role-badge">${role}</span></td>
   <td><div class="type-meta">${familyName}<br>${s.fontSize} / ${s.fontWeight}${lhRatio ? `<br>lh ${lhRatio}` : ""}</div></td>
   <td><div style="font-family:${familyCss};font-size:${displaySize}px;font-weight:${s.fontWeight};${lhRatio ? `line-height:${lhRatio};` : ""}color:${s.color};">${displaySample}</div></td>

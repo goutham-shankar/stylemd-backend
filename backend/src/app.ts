@@ -16,6 +16,13 @@ import { requireAdmin } from "./middleware/requireAdmin";
 export function createApp(): express.Application {
   const app = express();
 
+  // Clickjacking protection — deny all framing
+  app.use((_req, res, next) => {
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+    next();
+  });
+
   app.use(cors({
     origin: process.env.CORS_ORIGINS
       ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
