@@ -59,7 +59,8 @@ export function createApp(): express.Application {
   const scrapeRateLimit = rateLimit({
     windowMs: 60_000,
     max: 5,
-    keyGenerator: (req) => req.headers.authorization?.slice(7) || "anonymous",
+    // Per-token when authenticated, per-IP otherwise — prevents global bucket sharing
+    keyGenerator: (req) => req.headers.authorization?.slice(7) || req.ip || "anonymous",
     message: { ok: false, error: "Too many scrape requests — try again in a minute" },
     validate: { xForwardedForHeader: false },
   });
@@ -70,9 +71,28 @@ export function createApp(): express.Application {
     message: { success: true, message: "If an account exists, a sign-in link has been sent." },
     validate: { xForwardedForHeader: false },
   });
+  // POST /api/scraped-data is unauthenticated — rate-limit per IP to prevent queue spam
+  const scrapedDataRateLimit = rateLimit({
+    windowMs: 60_000,
+    max: 10,
+    keyGenerator: (req) => req.headers.authorization?.slice(7) || req.ip || "anonymous",
+    message: { ok: false, error: "Too many requests — try again in a minute" },
+    validate: { xForwardedForHeader: false },
+  });
   app.use("/api/public/scrape", scrapeRateLimit);
   app.use("/api/public/auth/send-link", authLinkRateLimit);
   app.use("/api/public", publicRouter);
+  app.use("/api/scraped-data", scrapedDataRateLimit);
+
+  // POST /api/stylemd triggers the full Kimi pipeline — rate-limit per IP/token
+  const styleMdRateLimit = rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    keyGenerator: (req) => req.headers.authorization?.slice(7) || req.ip || "anonymous",
+    message: { ok: false, error: "Too many scrape requests — try again in a minute" },
+    validate: { xForwardedForHeader: false },
+  });
+  app.use("/api/stylemd", styleMdRateLimit);
 
   // ── JSON admin API.
   app.use("/api/admin", adminRouter);

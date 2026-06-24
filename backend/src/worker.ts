@@ -22,7 +22,7 @@ import { User } from "./models/User";
 import { sendScrapeCompleteEmail } from "./services/email";
 
 const CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "2", 10);
-const LOCK_DURATION = parseInt(process.env.WORKER_LOCK_MS || "300000", 10); // 5 min
+const LOCK_DURATION = parseInt(process.env.WORKER_LOCK_MS || "600000", 10); // 10 min
 
 async function start(): Promise<void> {
   console.log("---------------------------------------------------------------------------");
