@@ -94,6 +94,26 @@ async function voltHasDesign(slug: string): Promise<boolean> {
   return false;
 }
 
+const DISMISS_SELECTORS = [
+  '#onetrust-accept-btn-handler',
+  '#onetrust-reject-all-handler',
+  '.ot-sdk-btn.ot-reject-all',
+  '#truste-consent-button',
+  '#CybotCookiebotDialogBodyButtonAccept',
+  '#CybotCookiebotDialogBodyLevelButtonAccept',
+  '[data-testid="cookie-policy-dialog-accept-button"]',
+  '[class*="cookie"] button:text-matches("agree|accept|allow|got it|ok", "i")',
+  '[class*="consent"] button:text-matches("agree|accept|allow|got it|ok", "i")',
+  '[class*="gdpr"] button:text-matches("agree|accept|allow|got it|ok", "i")',
+  '[id*="cookie"] button:text-matches("agree|accept|allow|got it|ok", "i")',
+  '[id*="consent"] button:text-matches("agree|accept|allow|got it|ok", "i")',
+  '[class*="cookie"] button:text-matches("reject|decline|refuse|close|no thanks", "i")',
+  '[class*="consent"] button:text-matches("reject|decline|refuse|close|no thanks", "i")',
+  '[role="dialog"] button[aria-label*="close" i]',
+  '[class*="modal"] button[aria-label*="close" i]',
+  '[class*="popup"] button[aria-label*="close" i]',
+];
+
 async function captureScreenshot(url: string): Promise<string | null> {
   let browser;
   try {
@@ -104,13 +124,52 @@ async function captureScreenshot(url: string): Promise<string | null> {
       userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     });
     const page = await context.newPage();
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForTimeout(2000);
 
-    const buffer = await page.screenshot({ type: "jpeg", quality: 60, fullPage: true });
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 }).catch(async () => {
+      await page.waitForLoadState("load", { timeout: 60_000 });
+    });
+
+    const runDismiss = async () => {
+      for (const sel of DISMISS_SELECTORS) {
+        try {
+          const el = page.locator(sel).first();
+          if (await el.isVisible({ timeout: 150 })) {
+            await el.click({ timeout: 800 });
+            await page.waitForTimeout(400);
+          }
+        } catch { /* not present — continue */ }
+      }
+    };
+
+    await runDismiss();
+    await page.waitForTimeout(3000); // let delayed popups (Intercom/Drift) appear
+    await runDismiss();              // second pass
+
+    await page.evaluate(() => document.fonts.ready).catch(() => undefined);
+    await Promise.race([
+      page.evaluate(() => {
+        const imgs = Array.from(document.images).filter((img) => {
+          const r = img.getBoundingClientRect();
+          return r.top < window.innerHeight && r.bottom > 0;
+        });
+        return Promise.all(
+          imgs.map((img) =>
+            img.complete
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  img.addEventListener("load", () => resolve(), { once: true });
+                  img.addEventListener("error", () => resolve(), { once: true });
+                })
+          )
+        );
+      }).catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
+
+    const buffer = await page.screenshot({ type: "jpeg", quality: 60, fullPage: false });
     const compressed = await sharp(buffer)
-      .resize({ width: 1000, withoutEnlargement: true })
-      .jpeg({ quality: 60 })
+      .resize({ width: 1440, withoutEnlargement: true })
+      .jpeg({ quality: 75 })
       .toBuffer();
 
     return `data:image/jpeg;base64,${compressed.toString("base64")}`;
