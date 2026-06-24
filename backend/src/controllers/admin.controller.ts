@@ -296,7 +296,7 @@ export async function browseCollection(req: Request, res: Response): Promise<voi
   }
 }
 
-const VALID_RUN_STATUSES = new Set(["queued", "running", "completed", "failed"]);
+const VALID_RUN_STATUSES = new Set(["queued", "running", "completed", "completed_with_warnings", "failed"]);
 
 // PATCH /api/admin/runs/:runId
 export async function updateRun(req: Request, res: Response): Promise<void> {

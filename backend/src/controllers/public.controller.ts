@@ -39,7 +39,7 @@ export async function publicScrape(req: Request, res: Response): Promise<void> {
   const slug = urlToSlug(normalizedUrl);
 
   // Return cached completed run — only associate user if it was a scrape-sourced run
-  const existing = await StyleMdRun.findOne({ slug, status: "completed" })
+  const existing = await StyleMdRun.findOne({ slug, status: { $in: ["completed", "completed_with_warnings"] } })
     .sort({ createdAt: -1 })
     .lean() as Record<string, unknown> | null;
   if (existing) {
@@ -265,7 +265,7 @@ export async function publicMyRuns(req: Request, res: Response): Promise<void> {
 // GET /api/public/runs/:slug — single run detail with DESIGN.md text
 export async function publicGetRun(req: Request, res: Response): Promise<void> {
   try {
-    const run = await StyleMdRun.findOne({ slug: req.params.slug, status: "completed" })
+    const run = await StyleMdRun.findOne({ slug: req.params.slug, status: { $in: ["completed", "completed_with_warnings"] } })
       .sort({ createdAt: -1 })
       .lean() as Record<string, unknown> | null;
 
