@@ -6,6 +6,7 @@ import { canonicalPageUrl, pageUrlVariantsForLookup } from "@/lib/services/pageU
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
 import { r2PublicUrl } from "@/lib/queue/r2";
+import { getEmailFromRequest } from "../utils/auth";
 
 // ---------------------------------------------------------------------------
 // POST /api/scraped-data  { url }
@@ -106,13 +107,21 @@ export async function createScrapedData(req: Request, res: Response): Promise<vo
       await existingJob.remove().catch(() => undefined);
     }
 
-    await scrapeQueue.add("scrape", { url: urlNormalized, provider, debugMode }, { jobId });
+    const userEmail = await getEmailFromRequest(req);
+
+    await scrapeQueue.add("scrape", { url: urlNormalized, provider, debugMode, userEmail }, { jobId });
 
     await safeWrite(() =>
       ScrapedData.updateOne(
         { url: urlNormalized },
         {
-          $set: { url: urlNormalized, runId: jobId, status: "queued", updatedAt: new Date() },
+          $set: { 
+            url: urlNormalized, 
+            runId: jobId, 
+            status: "queued", 
+            updatedAt: new Date(),
+            ...(userEmail ? { userEmail, email: userEmail } : {}),
+          },
           $setOnInsert: { createdAt: new Date() },
         },
         { upsert: true },

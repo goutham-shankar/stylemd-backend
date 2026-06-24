@@ -9,6 +9,7 @@ export interface ResolverContext {
   jobId: string;
   provider: StyleMdProvider;
   userId?: string;
+  userEmail?: string;
   debugMode?: boolean;
 }
 

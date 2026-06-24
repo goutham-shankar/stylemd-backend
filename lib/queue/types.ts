@@ -10,6 +10,7 @@ export type ScrapeJobData = {
   debugMode?: boolean;
   /** Firebase UID of the user who triggered this scrape. */
   userId?: string;
+  userEmail?: string;
 };
 
 /** R2 keys (not URLs) — resolve via r2PublicUrl() at read time. */

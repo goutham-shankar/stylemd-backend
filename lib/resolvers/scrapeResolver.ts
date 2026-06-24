@@ -21,6 +21,7 @@ export const scrapeResolver: DesignResolver = {
       screenshotDataUrl: result.screenshot,
       debugMode: ctx.debugMode,
       userId: ctx.userId,
+      userEmail: ctx.userEmail,
       source: "scrape",
     });
 

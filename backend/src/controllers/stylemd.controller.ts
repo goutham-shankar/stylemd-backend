@@ -15,6 +15,7 @@ import { finalizeStyleMdRun } from "../services/finalizeStyleMdRun";
 import type { KimiCostEstimate, KimiTokenUsage } from "@/lib/services/kimiUsage";
 
 import { runIdLog } from "@/lib/stylemd-artifacts/helpers";
+import { getEmailFromRequest } from "../utils/auth";
 
 /** R2 keys stored on a run/scrape doc (storage v2 — artifacts live in R2). */
 interface R2Keys {
@@ -139,6 +140,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     // --- Run the pipeline in background ---
     // Generate a runId here so we can return it immediately
     const runIdValue = `stylemd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const userEmail = await getEmailFromRequest(req);
     
     // 🟢 Create the pending record BEFORE responding, so getBySlug always finds it
     try {
@@ -155,6 +157,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
               styleMd: "",
               images: [],
               updatedAt: new Date(),
+              ...(userEmail ? { userEmail, email: userEmail } : {}),
             },
             $setOnInsert: { createdAt: new Date() },
           },
@@ -188,6 +191,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
           durationMs: Date.now() - startedAt,
           screenshotDataUrl: result.screenshot,
           userId,
+          userEmail,
         });
 
         // Reset retry count on success

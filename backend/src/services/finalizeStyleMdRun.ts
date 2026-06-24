@@ -38,6 +38,7 @@ export interface FinalizeStyleMdRunInput {
   screenshotDataUrl?: string | null;
   debugMode?: boolean;
   userId?: string;
+  userEmail?: string;
   source?: "library" | "volt" | "scrape";
 }
 
@@ -163,6 +164,23 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
     designTokens: r2.designTokens || null,
     assets: {},
   };
+  let userEmail = input.userEmail;
+  if (!userEmail) {
+    try {
+      const existingRun = await StyleMdRun.findOne({ runId }).select("userEmail").lean<{ userEmail?: string } | null>();
+      if (existingRun?.userEmail) {
+        userEmail = existingRun.userEmail;
+      } else {
+        const existingScraped = await ScrapedData.findOne({ url }).select("userEmail").lean<{ userEmail?: string } | null>();
+        if (existingScraped?.userEmail) {
+          userEmail = existingScraped.userEmail;
+        }
+      }
+    } catch (e) {
+      console.warn("[finalizeStyleMdRun] Failed to resolve fallback email from database:", e);
+    }
+  }
+
   const versions = {
     pipelineVersion: PIPELINE_VERSION,
     workerVersion: WORKER_VERSION,
@@ -184,6 +202,7 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
           ...versions,
           updatedAt: new Date(),
           lastScrapedAt: new Date(),
+          ...(userEmail ? { userEmail, email: userEmail } : {}),
         },
         $setOnInsert: { createdAt: new Date() },
       },
@@ -204,36 +223,43 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
           ...versions,
           updatedAt: new Date(),
           lastScrapedAt: new Date(),
+          ...(userEmail ? { userEmail, email: userEmail } : {}),
         },
         ...(userId ? { $addToSet: { userIds: userId } } : {}),
       },
     ),
   );
 
-  if (userId) {
+  const triggerEmail = (emailAddr: string) => {
+    const hostname = (() => {
+      try { return new URL(url).hostname; } catch { return slug; }
+    })();
+    console.log(`[finalizeStyleMdRun] sending scrape-complete email to ${emailAddr} for ${hostname}`);
+    sendScrapeCompleteEmail(emailAddr, {
+      hostname,
+      slug,
+      screenshotUrl: r2Doc.screenshot,
+      durationMs,
+      completedAt: new Date().toISOString(),
+    }).then(() => {
+      console.log(`[finalizeStyleMdRun] scrape-complete email sent to ${emailAddr}`);
+    }).catch((e) =>
+      console.error("[finalizeStyleMdRun] scrape-complete email failed:", e instanceof Error ? e.message : e),
+    );
+  };
+
+  if (userEmail) {
+    triggerEmail(userEmail);
+  } else if (userId) {
     console.log(`[finalizeStyleMdRun] userId=${userId} — looking up user for scrape-complete email`);
     const user = await User.findOne({ uid: userId }).lean();
     if (user?.email) {
-      const hostname = (() => {
-        try { return new URL(url).hostname; } catch { return slug; }
-      })();
-      console.log(`[finalizeStyleMdRun] sending scrape-complete email to ${user.email} for ${hostname}`);
-      sendScrapeCompleteEmail(user.email, {
-        hostname,
-        slug,
-        screenshotUrl: r2Doc.screenshot,
-        durationMs,
-        completedAt: new Date().toISOString(),
-      }).then(() => {
-        console.log(`[finalizeStyleMdRun] scrape-complete email sent to ${user.email}`);
-      }).catch((e) =>
-        console.error("[finalizeStyleMdRun] scrape-complete email failed:", e instanceof Error ? e.message : e),
-      );
+      triggerEmail(user.email);
     } else {
       console.warn(`[finalizeStyleMdRun] user not found or no email for uid=${userId}`);
     }
   } else {
-    console.log(`[finalizeStyleMdRun] no userId — skipping scrape-complete email`);
+    console.log(`[finalizeStyleMdRun] no userId or userEmail — skipping scrape-complete email`);
   }
 
   try {

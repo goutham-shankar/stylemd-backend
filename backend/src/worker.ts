@@ -54,6 +54,7 @@ async function start(): Promise<void> {
         jobId: job.id!,
         provider,
         userId: job.data.userId,
+        userEmail: job.data.userEmail,
         debugMode,
       }).catch((err) => {
         throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
@@ -68,31 +69,58 @@ async function start(): Promise<void> {
       // (scrapeResolver already does this via finalizeStyleMdRun, but
       // volt/library resolvers don't — handle it here for all paths)
       const userId = job.data.userId;
-      if (userId && resolved.source !== "scrape") {
-        safeWrite(() =>
-          StyleMdRun.updateOne(
-            { runId: resolved.runId },
-            { $addToSet: { userIds: userId } },
-          ),
-        ).catch(() => undefined);
+      const userEmailFromJob = job.data.userEmail;
+      if ((userId || userEmailFromJob) && resolved.source !== "scrape") {
+        if (userId) {
+          safeWrite(() =>
+            StyleMdRun.updateOne(
+              { runId: resolved.runId },
+              { $addToSet: { userIds: userId } },
+            ),
+          ).catch(() => undefined);
+        }
 
-        User.findOne({ uid: userId }).lean().then((user) => {
-          if (!user?.email) return;
+        if (userEmailFromJob) {
+          safeWrite(() =>
+            Promise.all([
+              StyleMdRun.updateOne(
+                { runId: resolved.runId },
+                { $set: { userEmail: userEmailFromJob, email: userEmailFromJob } },
+              ),
+              ScrapedData.updateOne(
+                { runId: resolved.runId },
+                { $set: { userEmail: userEmailFromJob, email: userEmailFromJob } },
+              ),
+            ])
+          ).catch(() => undefined);
+        }
+
+        const triggerEmail = (emailAddr: string) => {
           const hostname = (() => {
             try { return new URL(url).hostname; } catch { return slug; }
           })();
-          console.log(`[worker] sending scrape-complete email to ${user.email} for ${hostname} (source=${resolved.source})`);
-          sendScrapeCompleteEmail(user.email, {
+          console.log(`[worker] sending scrape-complete email to ${emailAddr} for ${hostname} (source=${resolved.source})`);
+          sendScrapeCompleteEmail(emailAddr, {
             hostname,
             slug,
             screenshotUrl: resolved.r2?.screenshot ?? null,
             durationMs,
           }).then(() => {
-            console.log(`[worker] scrape-complete email sent to ${user.email}`);
+            console.log(`[worker] scrape-complete email sent to ${emailAddr}`);
           }).catch((e) => {
             console.error(`[worker] scrape-complete email failed:`, e instanceof Error ? e.message : e);
           });
-        }).catch(() => undefined);
+        };
+
+        if (userEmailFromJob) {
+          triggerEmail(userEmailFromJob);
+        } else if (userId) {
+          User.findOne({ uid: userId }).lean().then((user) => {
+            if (user?.email) {
+              triggerEmail(user.email);
+            }
+          }).catch(() => undefined);
+        }
       }
 
       return { runId: resolved.runId, r2: resolved.r2 };

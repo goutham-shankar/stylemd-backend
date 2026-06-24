@@ -6,6 +6,8 @@ import { Category } from "../models/Category";
 import { r2PublicUrl, fetchR2Text, uploadR2, deleteR2, r2KeyFor } from "@/lib/queue/r2";
 import { scrapeQueue } from "@/lib/queue/scrapeQueue";
 import { urlToSlug } from "../services/runStorage";
+import type { AdminRequest } from "../middleware/requireAdmin";
+
 
 // GET /api/admin/stats
 export async function getDashboardStats(_req: Request, res: Response): Promise<void> {
@@ -449,6 +451,8 @@ export async function rerunScrape(req: Request, res: Response): Promise<void> {
     const url = doc.url as string;
     const slug = urlToSlug(url);
     const jobId = `scrape-${slug}`;
+    const userId = (req as AdminRequest).adminUser?.uid;
+    const userEmail = (req as AdminRequest).adminUser?.email;
 
     // Remove existing job if present so the new one doesn't conflict
     const existingJob = await scrapeQueue.getJob(jobId);
@@ -460,7 +464,7 @@ export async function rerunScrape(req: Request, res: Response): Promise<void> {
     await StyleMdRun.deleteOne({ runId });
 
     // Re-queue the scrape
-    await scrapeQueue.add("scrape", { url }, { jobId });
+    await scrapeQueue.add("scrape", { url, userId, userEmail }, { jobId });
 
     res.json({ ok: true, message: "Re-scrape queued", jobId, url });
   } catch (err) {
@@ -495,7 +499,10 @@ export async function newScrape(req: Request, res: Response): Promise<void> {
       await existingJob.remove().catch(() => undefined);
     }
 
-    await scrapeQueue.add("scrape", { url: normalizedUrl, provider: provider || "kimi" }, { jobId });
+    const userId = (req as AdminRequest).adminUser?.uid;
+    const userEmail = (req as AdminRequest).adminUser?.email;
+
+    await scrapeQueue.add("scrape", { url: normalizedUrl, provider: provider || "kimi", userId, userEmail }, { jobId });
     res.json({ ok: true, jobId, status: "queued", url: normalizedUrl, slug });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
