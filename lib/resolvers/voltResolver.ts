@@ -74,15 +74,24 @@ function voltPreviewUrl(slug: string): string {
 }
 
 async function voltHasDesign(slug: string): Promise<boolean> {
-  try {
-    const resp = await fetch(voltDesignMdUrl(slug), {
-      method: "HEAD",
-      signal: AbortSignal.timeout(VOLT_FETCH_TIMEOUT_MS),
-    });
-    return resp.ok;
-  } catch {
-    return false;
+  const url = voltDesignMdUrl(slug);
+  for (const method of ["HEAD", "GET"] as const) {
+    try {
+      const resp = await fetch(url, {
+        method,
+        signal: AbortSignal.timeout(VOLT_FETCH_TIMEOUT_MS),
+      });
+      console.log(`[volt] ${method} ${url} → ${resp.status}`);
+      if (resp.ok) return true;
+      if (method === "HEAD" && resp.status === 405) continue;
+      return false;
+    } catch (err) {
+      console.warn(`[volt] ${method} ${url} → ERROR: ${err instanceof Error ? err.message : String(err)}`);
+      if (method === "HEAD") continue;
+      return false;
+    }
   }
+  return false;
 }
 
 async function captureScreenshot(url: string): Promise<string | null> {
@@ -117,11 +126,27 @@ export const voltResolver: DesignResolver = {
   name: "volt",
 
   async canResolve(ctx) {
-    const slug = slugFromUrl(ctx.url);
-    if (!slug) return false;
-    const exists = await voltHasDesign(slug);
-    if (exists) (ctx as any)._voltSlug = slug;
-    return exists;
+    // Derive two candidate slugs:
+    //   stripped → "linear.app" becomes "linear"   (works for stripe.com → stripe)
+    //   full     → "linear.app" stays "linear.app" (works for x.ai, mistral.ai, etc.)
+    let host = "";
+    try {
+      host = new URL(ctx.url).hostname;
+      if (host.startsWith("www.")) host = host.slice(4);
+    } catch { return false; }
+    if (!host) return false;
+
+    const stripped = host.replace(/\.[^.]+$/, "");
+    const candidates = stripped === host ? [host] : [stripped, host];
+
+    for (const slug of candidates) {
+      const exists = await voltHasDesign(slug);
+      if (exists) {
+        (ctx as any)._voltSlug = slug;
+        return true;
+      }
+    }
+    return false;
   },
 
   async resolve(ctx) {
