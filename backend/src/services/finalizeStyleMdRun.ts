@@ -17,6 +17,7 @@ import { join } from "node:path";
 import {
   uploadR2,
   r2KeyFor,
+  r2PublicUrl,
   buildManifest,
   PIPELINE_VERSION,
   WORKER_VERSION,
@@ -270,7 +271,8 @@ export async function finalizeStyleMdRun(input: FinalizeStyleMdRunInput): Promis
       await sendScrapeCompleteEmail(emailAddr, {
         hostname,
         slug,
-        screenshotUrl: r2Doc.screenshot,
+        // r2Doc.screenshot is an R2 storage key — convert to public HTTPS URL
+        screenshotUrl: r2PublicUrl(r2Doc.screenshot),
         durationMs,
         completedAt: new Date().toISOString(),
       });
