@@ -36,6 +36,48 @@ export async function publicScrape(req: Request, res: Response): Promise<void> {
 
   let normalizedUrl = url.trim();
   if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = `https://${normalizedUrl}`;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalizedUrl);
+  } catch {
+    res.status(400).json({ ok: false, error: "Invalid URL" });
+    return;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Block non-HTTP schemes, IPs, localhost, and internal networks
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    res.status(400).json({ ok: false, error: "Only http/https URLs are allowed" });
+    return;
+  }
+  if (/^(localhost|127\.\d|10\.\d|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|\[::1?\])/.test(hostname)) {
+    res.status(400).json({ ok: false, error: "Internal/private URLs are not allowed" });
+    return;
+  }
+
+  // Must look like an actual website — require a TLD with 2+ chars
+  const parts = hostname.split(".");
+  if (parts.length < 2 || (parts[parts.length - 1]?.length ?? 0) < 2) {
+    res.status(400).json({ ok: false, error: "Please enter a valid website URL" });
+    return;
+  }
+
+  // Block API test/dev/non-website domains
+  const BLOCKED_DOMAINS = [
+    "httpbin.org", "example.com", "example.org", "example.net",
+    "jsonplaceholder.typicode.com", "reqres.in", "postman-echo.com",
+    "webhook.site", "requestbin.com",
+  ];
+  if (BLOCKED_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`))) {
+    res.status(400).json({ ok: false, error: "This URL is not a real website" });
+    return;
+  }
+
+  // Strip path, query, hash — only scrape the homepage
+  normalizedUrl = `${parsed.protocol}//${parsed.hostname}`;
+
   const slug = urlToSlug(normalizedUrl);
 
   // Return cached completed run — only associate user if it was a scrape-sourced run
