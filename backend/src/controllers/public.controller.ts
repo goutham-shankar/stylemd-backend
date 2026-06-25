@@ -8,6 +8,22 @@ import { verifyIdToken } from "../lib/firebaseAdmin";
 import { urlToSlug } from "../services/runStorage";
 import { sendWelcomeEmail } from "../services/email";
 
+// Per-user rate limit: max 10 scrapes per minute
+const USER_RATE_LIMIT = 10;
+const USER_RATE_WINDOW_MS = 60_000;
+const userRatemap = new Map<string, { count: number; resetAt: number }>();
+function checkUserRateLimit(uid: string): boolean {
+  const now = Date.now();
+  const entry = userRatemap.get(uid);
+  if (!entry || now >= entry.resetAt) {
+    userRatemap.set(uid, { count: 1, resetAt: now + USER_RATE_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= USER_RATE_LIMIT) return false;
+  entry.count++;
+  return true;
+}
+
 // POST /api/public/scrape
 // Requires Firebase ID token in Authorization header. Any signed-in user can submit.
 export async function publicScrape(req: Request, res: Response): Promise<void> {
@@ -25,6 +41,11 @@ export async function publicScrape(req: Request, res: Response): Promise<void> {
     uid = decoded.uid;
   } catch {
     res.status(401).json({ ok: false, error: "Invalid or expired session" });
+    return;
+  }
+
+  if (!checkUserRateLimit(uid)) {
+    res.status(429).json({ ok: false, error: "Too many requests — please wait a moment before trying again" });
     return;
   }
 
@@ -377,7 +398,13 @@ export async function publicListCategories(_req: Request, res: Response): Promis
     const [catDocs, rows] = await Promise.all([
       Category.find({}, { name: 1 }).lean(),
       StyleMdRun.aggregate([
-        { $match: { status: { $in: ["completed", "completed_with_warnings"] }, slug: { $ne: null } } },
+        {
+          $match: {
+            status: { $in: ["completed", "completed_with_warnings"] },
+            slug: { $ne: null },
+            url: { $not: /^https?:\/\/(httpbin\.org|example\.com|example\.org|example\.net|jsonplaceholder\.typicode\.com|reqres\.in|postman-echo\.com|webhook\.site|requestbin\.com)(\/|$)/i },
+          },
+        },
         { $group: { _id: "$category", count: { $sum: 1 } } },
       ]),
     ]);

@@ -94,6 +94,8 @@ const StyleMdRunSchema = new mongoose.Schema(
 
 // Compound: "runs for URL, newest first" — frontend run-history UI
 StyleMdRunSchema.index({ url: 1, createdAt: -1 });
+// Compound: library listing — status filter + newest-first sort
+StyleMdRunSchema.index({ status: 1, createdAt: -1 });
 
 export const StyleMdRun =
   mongoose.models["StyleMdRun"] || mongoose.model("StyleMdRun", StyleMdRunSchema);

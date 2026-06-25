@@ -150,7 +150,7 @@ export async function runSimplifiedStyleMdPipeline(
   const scraped = await scrape(canonUrl);
   
   if (scraped) {
-    runIdLog(runIdValue, `[DEBUG] Scrape result: title="${scraped.title}", htmlLength=${scraped.rawHtml?.length ?? 0}, textLength=${scraped.contentText?.length ?? 0}, imagesCount=${scraped.images?.length ?? 0}`);
+    runIdLog(runIdValue, `[DEBUG] Scrape result: title="${scraped.title}", textLength=${scraped.contentText?.length ?? 0}, imagesCount=${scraped.images?.length ?? 0}`);
   } else {
     runIdLog(runIdValue, `[DEBUG] Scrape FAILED (returned null) for ${url}`, "warn");
   }

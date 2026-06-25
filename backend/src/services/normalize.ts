@@ -17,14 +17,13 @@ export interface NormalizableData {
 }
 
 export interface NormalizedData {
-  url: string; 
-  title: string | null; 
-  description: string | null; 
-  h1: string | null; 
-  canonical: string | null; 
-  images: string[]; 
-  contentText: string | null; 
-  rawHtml: string | null;
+  url: string;
+  title: string | null;
+  description: string | null;
+  h1: string | null;
+  canonical: string | null;
+  images: string[];
+  contentText: string | null;
   screenshotBase64: string | null;
   brandAssets: {
     logo: string | null;
@@ -42,8 +41,7 @@ export function normalize(obj: NormalizableData): NormalizedData {
     h1: obj.h1 ? String(obj.h1).trim() : null, 
     canonical: obj.canonical ? String(obj.canonical).trim() : null,
     images: Array.isArray(obj.images) ? obj.images.map(String) : [], 
-    contentText: obj.contentText ? String(obj.contentText).trim() : null, 
-    rawHtml: obj.rawHtml ? String(obj.rawHtml) : null,
+    contentText: obj.contentText ? String(obj.contentText).trim() : null,
     screenshotBase64: obj.screenshotBase64 ? String(obj.screenshotBase64) : null,
     brandAssets: {
       logo: obj.brandAssets?.logo ?? null,

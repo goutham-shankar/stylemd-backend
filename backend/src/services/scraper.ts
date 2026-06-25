@@ -49,8 +49,12 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
 
   try {
     browser = await chromium.launch(getPlaywrightLaunchOptions());
-    const page = await browser.newPage();
-    await page.setViewportSize({ width: 1440, height: 900 });
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      deviceScaleFactor: 1,
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    });
+    const page = await context.newPage();
     await injectStealth(page);
 
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -167,15 +171,14 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
 
     console.log(`[SCRAPE] extracted title="${title?.slice(0, 60)}" images=${images.length}`);
 
-    return { 
-      url, 
-      title: title ? String(title).trim() : null, 
-      description: description ? String(description).trim() : null, 
-      h1: h1 ? String(h1).trim() : null, 
-      canonical: canonical ? String(canonical).trim() : null, 
-      images, 
-      contentText: contentText ? String(contentText).trim() : null, 
-      rawHtml: rawHtml ? String(rawHtml).slice(0, 50000) : null, // Truncate to 50KB
+    return {
+      url,
+      title: title ? String(title).trim() : null,
+      description: description ? String(description).trim() : null,
+      h1: h1 ? String(h1).trim() : null,
+      canonical: canonical ? String(canonical).trim() : null,
+      images,
+      contentText: contentText ? String(contentText).trim() : null,
       screenshotBase64,
       brandAssets
     };

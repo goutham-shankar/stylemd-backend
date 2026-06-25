@@ -61,7 +61,12 @@ async function start(): Promise<void> {
         debugMode,
         forceScreenshot,
       }).catch((err) => {
-        throw new UnrecoverableError(err instanceof Error ? err.message : String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+        // Only mark unrecoverable for permanent logical failures — let transient
+        // errors (network, Playwright crash, Kimi timeout) retry normally.
+        const permanent = /no resolver found|invalid url|cannot derive/i.test(msg);
+        if (permanent) throw new UnrecoverableError(msg);
+        throw err;
       });
       await job.updateProgress(100);
       const durationMs = Date.now() - t0;
