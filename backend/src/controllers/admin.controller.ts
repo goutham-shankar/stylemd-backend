@@ -485,6 +485,15 @@ export async function newScrape(req: Request, res: Response): Promise<void> {
     let normalizedUrl = url.trim();
     if (!/^https?:\/\//i.test(normalizedUrl)) normalizedUrl = `https://${normalizedUrl}`;
 
+    // Strip path/query/hash — only scrape homepages
+    try {
+      const p = new URL(normalizedUrl);
+      normalizedUrl = `${p.protocol}//${p.hostname}`;
+    } catch {
+      res.status(400).json({ ok: false, error: "Invalid URL" });
+      return;
+    }
+
     const canonUrl = canonicalPageUrl(normalizedUrl);
     const slug = urlToSlug(canonUrl);
     const jobId = `scrape-${slug}`;
