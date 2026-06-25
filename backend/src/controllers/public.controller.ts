@@ -216,18 +216,38 @@ export async function publicRunEvents(req: Request, res: Response): Promise<void
 // GET /api/public/runs — list completed runs
 export async function publicListRuns(req: Request, res: Response): Promise<void> {
   try {
-    const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || "24"), 10)));
+    const limit = Math.min(100, Math.max(1, parseInt(String(req.query.limit || "24"), 10)));
+    const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+    const skip = (page - 1) * limit;
     const excludeSlug = req.query.excludeSlug ? String(req.query.excludeSlug) : null;
     const filter: Record<string, unknown> = {
       status: { $in: ["completed", "completed_with_warnings"] },
       slug: excludeSlug ? { $nin: [null, excludeSlug] } : { $ne: null },
+      url: { $not: /^https?:\/\/(httpbin\.org|example\.com|example\.org|example\.net|jsonplaceholder\.typicode\.com|reqres\.in|postman-echo\.com|webhook\.site|requestbin\.com)(\/|$)/i },
     };
-    if (req.query.category) filter.category = String(req.query.category);
-    const runs = await StyleMdRun.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .select("runId url slug title description category r2 createdAt")
-      .lean();
+
+    // Resolve category — fetch category docs in parallel with nothing (fast path for non-slug)
+    if (req.query.category) {
+      const rawCategory = String(req.query.category);
+      const isSlugged = /^[a-z0-9-]+$/.test(rawCategory);
+      if (isSlugged) {
+        const catDocs = await Category.find({}, { name: 1 }).lean();
+        const allNames = new Set(catDocs.map((c) => c.name));
+        filter.category = slugToCategory(rawCategory, allNames) ?? rawCategory;
+      } else {
+        filter.category = rawCategory;
+      }
+    }
+
+    const [runs, total] = await Promise.all([
+      StyleMdRun.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select("runId url slug title description category r2 createdAt")
+        .lean(),
+      StyleMdRun.countDocuments(filter),
+    ]);
 
     const data = runs.map((r) => {
       const r2 = (r.r2 as Record<string, unknown> | null) ?? {};
@@ -243,7 +263,7 @@ export async function publicListRuns(req: Request, res: Response): Promise<void>
       };
     });
 
-    res.json({ ok: true, data });
+    res.json({ ok: true, data, total, page, pages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
@@ -339,6 +359,17 @@ export async function publicGetRun(req: Request, res: Response): Promise<void> {
   }
 }
 
+function categoryToSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function slugToCategory(slug: string, allNames: Iterable<string>): string | null {
+  for (const name of allNames) {
+    if (categoryToSlug(name) === slug) return name;
+  }
+  return null;
+}
+
 // GET /api/public/categories
 // Returns all known categories (from Category collection + runs) with run counts, sorted by count desc.
 export async function publicListCategories(_req: Request, res: Response): Promise<void> {
@@ -360,7 +391,7 @@ export async function publicListCategories(_req: Request, res: Response): Promis
     for (const name of countMap.keys()) allNames.add(name);
 
     const data = Array.from(allNames)
-      .map((name) => ({ name, count: countMap.get(name) ?? 0 }))
+      .map((name) => ({ name, slug: categoryToSlug(name), count: countMap.get(name) ?? 0 }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
     res.json({ ok: true, data });

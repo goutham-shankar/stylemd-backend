@@ -6,6 +6,7 @@ import {
   injectStealth,
   dismissOverlays,
   hideJunkBeforeScreenshot,
+  removeJunkFromDom,
   scrollAndSettle,
   waitForAssets,
 } from "@/lib/stylemd-artifacts/helpers";
@@ -72,6 +73,7 @@ async function scrapeOnce(url: string): Promise<NormalizedData> {
     screenshotBase64 = `data:image/jpeg;base64,${buffer.toString("base64")}`;
     console.log(`[SCRAPE] screenshot captured, base64 length=${screenshotBase64.length}`);
 
+    await removeJunkFromDom(page);
     const rawHtml = await page.content();
     const baseUrl = page.url(); // Use the actual page URL after redirects
     

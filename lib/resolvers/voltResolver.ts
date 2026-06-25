@@ -48,14 +48,29 @@ function sanitizeVoltHtml(html: string): string {
   // ── 4. Remove GitHub links/buttons from the nav ───────────────────────────
   // Remove <a> tags pointing to github.com (handles both quote styles)
   out = out.replace(/<a\s[^>]*href=["'][^"']*github\.com[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, "");
-  // CSS fallback — inject before </head>, </body>, or append to end
-  const githubHideStyle = `<style>a[href*="github"]{display:none!important}</style>`;
+  // Inject styles to hide GitHub links + cookie/chat junk
+  const injectStyle = `<style>
+a[href*="github"]{display:none!important}
+#onetrust-consent-sdk,#onetrust-banner-sdk,#onetrust-pc-sdk,
+#truste-consent-track,#CybotCookiebotDialog,
+[id*="cookie-banner"],[id*="cookie-consent"],[id*="cookiebanner"],[id*="consent-banner"],
+[class*="cookie-banner"],[class*="cookie-consent"],[class*="consent-banner"],
+[id*="gdpr"],[class*="gdpr"],
+[class*="cookie"][style*="position: fixed"],[class*="consent"][style*="position: fixed"],
+[class*="overlay"][style*="position: fixed"],
+#intercom-container,#intercom-frame,#drift-widget,#drift-frame,
+#hubspot-messages-iframe-container,#beacon-container,.BeaconFabButtonFrame,
+#tawk-bubble-container,#tawk-container,#fc_frame,#fc-widget,
+#crisp-chatbox,#tidio-chat,#tidio-chat-iframe,#zsiq_float,#launcher,
+[class*="scroll-to-top"],[class*="back-to-top"],[id*="scroll-to-top"],[id*="back-to-top"]
+{display:none!important;visibility:hidden!important}
+</style>`;
   if (/<\/head>/i.test(out)) {
-    out = out.replace(/<\/head>/i, `${githubHideStyle}</head>`);
+    out = out.replace(/<\/head>/i, `${injectStyle}</head>`);
   } else if (/<\/body>/i.test(out)) {
-    out = out.replace(/<\/body>/i, `${githubHideStyle}</body>`);
+    out = out.replace(/<\/body>/i, `${injectStyle}</body>`);
   } else {
-    out += githubHideStyle;
+    out += injectStyle;
   }
 
   return out;

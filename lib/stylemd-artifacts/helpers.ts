@@ -248,6 +248,47 @@ export async function hideJunkBeforeScreenshot(page: PlaywrightPage): Promise<vo
   });
 }
 
+// Physically remove cookie banners, chat widgets, and overlays from the DOM
+// so they don't appear in page.content() saved HTML.
+export async function removeJunkFromDom(page: PlaywrightPage): Promise<void> {
+  await page.evaluate(() => {
+    const REMOVE_SELECTORS = [
+      // OneTrust / TrustArc / Cookiebot banners
+      '#onetrust-consent-sdk', '#onetrust-banner-sdk', '#onetrust-pc-sdk',
+      '#truste-consent-track', '#truste-consent-content',
+      '#CybotCookiebotDialog', '#CybotCookiebotDialogBody',
+      // Generic cookie/consent/gdpr containers
+      '[id*="cookie-banner"]', '[id*="cookie-consent"]', '[id*="cookiebanner"]',
+      '[id*="cookie_consent"]', '[class*="cookie-banner"]', '[class*="cookie-consent"]',
+      '[id*="consent-banner"]', '[class*="consent-banner"]',
+      '[id*="gdpr"]', '[class*="gdpr"]',
+      // Overlay backdrops
+      '[class*="cookie"][style*="position: fixed"]',
+      '[class*="consent"][style*="position: fixed"]',
+      '[class*="overlay"][style*="position: fixed"]',
+      // Chat widgets
+      '#intercom-container', '#intercom-frame',
+      '#drift-widget', '#drift-frame',
+      '#hubspot-messages-iframe-container',
+      '#beacon-container', '.BeaconFabButtonFrame',
+      '#tawk-bubble-container', '#tawk-container',
+      '#fc_frame', '#fc-widget',
+      '#crisp-chatbox',
+      '#tidio-chat', '#tidio-chat-iframe',
+      '#zsiq_float',
+      '#launcher',
+      // Scroll-to-top buttons
+      '[class*="scroll-to-top"]', '[class*="back-to-top"]', '[class*="scrollToTop"]',
+      '[id*="scroll-to-top"]', '[id*="back-to-top"]',
+    ];
+    for (const sel of REMOVE_SELECTORS) {
+      try {
+        document.querySelectorAll(sel).forEach((el) => el.remove());
+      } catch { /* invalid selector in some browsers — skip */ }
+    }
+  });
+}
+
 export async function scrollAndSettle(page: PlaywrightPage): Promise<void> {
   await page.evaluate(async () => {
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
