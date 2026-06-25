@@ -243,6 +243,7 @@ export async function publicListRuns(req: Request, res: Response): Promise<void>
     const excludeSlug = req.query.excludeSlug ? String(req.query.excludeSlug) : null;
     const filter: Record<string, unknown> = {
       status: { $in: ["completed", "completed_with_warnings"] },
+      featured: true,
       slug: excludeSlug ? { $nin: [null, excludeSlug] } : { $ne: null },
       url: { $not: /^https?:\/\/(httpbin\.org|example\.com|example\.org|example\.net|jsonplaceholder\.typicode\.com|reqres\.in|postman-echo\.com|webhook\.site|requestbin\.com)(\/|$)/i },
     };
@@ -401,6 +402,7 @@ export async function publicListCategories(_req: Request, res: Response): Promis
         {
           $match: {
             status: { $in: ["completed", "completed_with_warnings"] },
+            featured: true,
             slug: { $ne: null },
             url: { $not: /^https?:\/\/(httpbin\.org|example\.com|example\.org|example\.net|jsonplaceholder\.typicode\.com|reqres\.in|postman-echo\.com|webhook\.site|requestbin\.com)(\/|$)/i },
           },
