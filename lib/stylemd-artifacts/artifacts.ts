@@ -103,7 +103,12 @@ export async function readStyleMdSummary(runId: string): Promise<StyleMdRunSumma
   try {
     const path = join(getStyleMdRunDir(runId), "summary.json");
     const content = await readFile(path, "utf8");
-    return JSON.parse(content) as StyleMdRunSummary;
+    const parsed = JSON.parse(content) as Partial<StyleMdRunSummary>;
+    return {
+      provider: "claude",
+      model: "default",
+      ...parsed,
+    } as StyleMdRunSummary;
   } catch {
     return null;
   }

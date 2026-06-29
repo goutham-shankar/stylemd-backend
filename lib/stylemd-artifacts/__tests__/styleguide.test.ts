@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 import { getStyleMdRunDir } from "@/lib/stylemd-artifacts/artifacts";
 import {
   runShowcaseStage,
@@ -151,7 +152,139 @@ function buildValidMarkdown(): string {
     "",
     "## Responsive + Hover",
     "Desktop keeps multi-column structure, mobile compresses stacks, and hover states intensify color/surface contrast.",
+    "",
+    "```stylemd-json",
+    JSON.stringify({
+      typography: { display: "serif", body: "sans", scale: "editorial" },
+      fonts: [{ name: "serif", role: "Display" }, { name: "sans", role: "Body" }],
+      palette: [{ name: "Accent", hex: "#111111", desc: "primary actions" }],
+      mood: "Editorial",
+      radius: "medium",
+      spacing: "8px",
+      cornerRadius: "8px",
+      accentColor: "#111111",
+    }),
+    "```",
   ].join("\n");
+}
+
+function buildVisionMarkdown(): string {
+  return [
+    "# style.md",
+    "",
+    "## Design Personality",
+    "The site feels editorial, polished, and high-contrast with confident visual energy.",
+    "",
+    "## Color System",
+    "- Use for primary actions: the strongest accent color.",
+    "- Do not use for quiet body surfaces: high-saturation accent fills.",
+    "",
+    "## Typography System",
+    "- Display type is for hero headlines and campaign-level statements.",
+    "- Body type is for product, editorial, and support copy.",
+    "",
+    "## Layout, Grid & Spacing",
+    "Use generous section rhythm with dense internal card spacing.",
+    "",
+    "## Composition Rules",
+    "Hero composition should create a dominant visual hierarchy before secondary content.",
+    "",
+    "## Imagery & Media",
+    "Use tight image treatment, intentional crop framing, and product-led media.",
+    "",
+    "## Navigation & Header System",
+    "- Structure: logo on the left, concise menu links in the center, and cart/search utility actions on the right.",
+    "- Positioning: use a sticky top header on scroll; use transparent overlay treatment only when the hero image can support readable contrast.",
+    "- Desktop behavior: keep horizontal navigation visible with hover states for menu links and active states for the current section.",
+    "- Mobile behavior: collapse menu links into a hamburger drawer with large tap targets and persistent cart/search utilities.",
+    "- Dropdowns: use simple dropdown or mega-menu panels only for multi-category catalogs; keep editorial pages with direct links.",
+    "",
+    "## Components & Usage Scenarios",
+    "Common scenarios: primary buttons for purchase or signup, cards for grouped content, nav for concise section access.",
+    "",
+    "## Interaction & Motion",
+    "Hover states should intensify contrast without changing layout.",
+    "",
+    "## Responsive Behavior",
+    "Mobile stacks media and copy while preserving the hero's primary visual.",
+    "",
+    "## Page Recipes",
+    "Homepage and landing page recipes should start with a bold hero, then product/editorial sections.",
+    "",
+    "## Do's and Don'ts",
+    "### Do's",
+    "- Preserve contrast and spacing rhythm.",
+    "- Use display type for campaign-level hierarchy.",
+    "- Pair product-led media with concise supporting copy.",
+    "",
+    "### Don'ts",
+    "- Don't flatten the hierarchy into generic cards.",
+    "- Don't introduce unrelated accent colors.",
+    "- Don't crowd dense content into hero layouts.",
+    "",
+    "```stylemd-json",
+    JSON.stringify({
+      typography: { display: "serif", body: "sans", scale: "editorial" },
+      fonts: [{ name: "serif", role: "Display" }, { name: "sans", role: "Body" }],
+      palette: [{ name: "Accent", hex: "#111111", desc: "primary actions" }],
+      mood: "Editorial",
+      radius: "medium",
+      spacing: "8px",
+      cornerRadius: "8px",
+      accentColor: "#111111",
+    }),
+    "```",
+  ].join("\n");
+}
+
+function buildVisionMarkdownWithProseDoDonts(): string {
+  return buildVisionMarkdown().replace(
+    [
+      "## Do's and Don'ts",
+      "### Do's",
+      "- Preserve contrast and spacing rhythm.",
+      "- Use display type for campaign-level hierarchy.",
+      "- Pair product-led media with concise supporting copy.",
+      "",
+      "### Don'ts",
+      "- Don't flatten the hierarchy into generic cards.",
+      "- Don't introduce unrelated accent colors.",
+      "- Don't crowd dense content into hero layouts.",
+    ].join("\n"),
+    [
+      "## Do's and Don'ts",
+      "Do preserve contrast and spacing rhythm, use display type for campaign hierarchy, and pair media with concise copy.",
+      "Don't flatten the hierarchy, introduce unrelated accent colors, or crowd dense content into hero layouts.",
+    ].join("\n"),
+  );
+}
+
+function buildVisionMarkdownWithoutNavigation(): string {
+  return buildVisionMarkdown().replace(
+    [
+      "## Navigation & Header System",
+      "- Structure: logo on the left, concise menu links in the center, and cart/search utility actions on the right.",
+      "- Positioning: use a sticky top header on scroll; use transparent overlay treatment only when the hero image can support readable contrast.",
+      "- Desktop behavior: keep horizontal navigation visible with hover states for menu links and active states for the current section.",
+      "- Mobile behavior: collapse menu links into a hamburger drawer with large tap targets and persistent cart/search utilities.",
+      "- Dropdowns: use simple dropdown or mega-menu panels only for multi-category catalogs; keep editorial pages with direct links.",
+      "",
+    ].join("\n"),
+    "",
+  );
+}
+
+async function writeTinyPng(path: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const buffer = await sharp({
+    create: {
+      width: 16,
+      height: 16,
+      channels: 3,
+      background: { r: 20, g: 20, b: 20 },
+    },
+  }).png().toBuffer();
+  await writeFile(path, buffer);
 }
 
 function buildValidShowcaseHtml(): string {
@@ -172,6 +305,119 @@ function buildValidShowcaseHtml(): string {
     "  <main>",
     "    <h1>Editorial Commerce Mood</h1>",
     "    <p>Spacing alternates between large section breaks and tight card internals.</p>",
+    "  </main>",
+    "</body>",
+    "</html>",
+  ].join("\n");
+}
+
+function buildShowcaseHtmlWithNavigationEvidence(): string {
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head>",
+    "  <meta charset=\"utf-8\" />",
+    "  <title>Showcase</title>",
+    "  <style>",
+    "    body { margin: 0; font-family: serif; background: #f7f4ee; color: #161616; }",
+    "    main { max-width: 960px; margin: 0 auto; padding: 48px 24px; }",
+    "    .nav-evidence { border: 1px solid #161616; margin: 24px 0; padding: 18px 24px; }",
+    "    .nav-evidence dl { display: grid; grid-template-columns: 160px 1fr; gap: 8px 20px; }",
+    "    .nav-evidence dt { text-transform: uppercase; font-size: 12px; letter-spacing: 0.08em; }",
+    "  </style>",
+    "</head>",
+    "<body>",
+    "  <main>",
+    "    <h1>Editorial Commerce Mood</h1>",
+    "    <section>",
+    "      <h2>Navigation &amp; Header System</h2>",
+    "      <div class=\"nav-evidence\" data-stylemd-nav-evidence=\"true\">",
+    "        <dl>",
+    "          <dt>Observed structure</dt><dd>Logo, primary links, utility action.</dd>",
+    "          <dt>Dimensions</dt><dd>1366px wide, 72px tall, fixed at top.</dd>",
+    "          <dt>Typography</dt><dd>Navigation links use 12px uppercase text, 0.08em letter spacing, 500 weight.</dd>",
+    "        </dl>",
+    "      </div>",
+    "    </section>",
+    "  </main>",
+    "</body>",
+    "</html>",
+  ].join("\n");
+}
+
+function buildShowcaseHtmlWithDebugNavigationEvidence(): string {
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head><meta charset=\"utf-8\" /><title>Showcase</title></head>",
+    "<body>",
+    "  <main>",
+    "    <section>",
+    "      <h2>Navigation &amp; Header System</h2>",
+    "      <div data-stylemd-nav-evidence=\"true\">",
+    "        <p><strong>Selector:</strong> div.global:nth-of-type(1) > nav.nav.navigation</p>",
+    "        <p>Font size 15.1778px, line-height 18.9722px, letter-spacing -0.151778px.</p>",
+    "        <h3>Annotated DOM Structure</h3>",
+    "        <pre>&lt;nav class=\"nav navigation\"&gt; .nav_body .nav_trigger</pre>",
+    "      </div>",
+    "    </section>",
+    "  </main>",
+    "</body>",
+    "</html>",
+  ].join("\n");
+}
+
+function buildShowcaseHtmlWithoutTypographyMeasurements(): string {
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head><meta charset=\"utf-8\" /><title>Showcase</title></head>",
+    "<body>",
+    "  <main>",
+    "    <h1>Editorial Commerce Mood</h1>",
+    "    <section>",
+    "      <h2>Typography</h2>",
+    "      <p>The body family is used for paragraphs and UI labels.</p>",
+    "    </section>",
+    "  </main>",
+    "</body>",
+    "</html>",
+  ].join("\n");
+}
+
+function buildShowcaseHtmlWithTypographyMeasurements(): string {
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head><meta charset=\"utf-8\" /><title>Showcase</title></head>",
+    "<body>",
+    "  <main>",
+    "    <h1>Editorial Commerce Mood</h1>",
+    "    <section>",
+    "      <h2>Typography</h2>",
+    "      <p>Body copy uses Example Sans at 16px, line-height 24px, font-weight 400, and normal letter spacing.</p>",
+    "    </section>",
+    "  </main>",
+    "</body>",
+    "</html>",
+  ].join("\n");
+}
+
+function buildShowcaseHtmlWithFontLoadingCopy(): string {
+  return [
+    "<!doctype html>",
+    "<html>",
+    "<head>",
+    "  <meta charset=\"utf-8\" />",
+    "  <title>Showcase</title>",
+    "  <style>",
+    "    body { margin: 0; font-family: serif; background: #f7f4ee; color: #161616; }",
+    "  </style>",
+    "</head>",
+    "<body>",
+    "  <main>",
+    "    <h1>Editorial Commerce Mood</h1>",
+    "    <p>Font Loading: This showcase uses local WOFF2 font files referenced via page_styles/fonts.local.css with system fallbacks.</p>",
     "  </main>",
     "</body>",
     "</html>",
@@ -211,6 +457,22 @@ function buildTypographyMarkdown(): string {
     "",
     "## System",
     "Use generous vertical rhythm with restrained color contrast and clean whitespace.",
+    "",
+    "```stylemd-json",
+    JSON.stringify({
+      typography: { display: "Vivey 22 Positive", body: "FHA Condensed French NC", scale: "editorial" },
+      fonts: [
+        { name: "Vivey 22 Positive", role: "Display" },
+        { name: "FHA Condensed French NC", role: "Body" },
+      ],
+      palette: [{ name: "Cream", hex: "#f7f4ee", desc: "surface" }],
+      mood: "Editorial",
+      radius: "medium",
+      spacing: "8px",
+      cornerRadius: "8px",
+      accentColor: "#111111",
+    }),
+    "```",
   ].join("\n");
 }
 
@@ -247,6 +509,7 @@ test("runStyleguideStage integration writes style.md with compact evidence artif
     curatedManifestPath,
     curatedManifest,
     responsiveHoverEvidencePath,
+    designMdMode: "baseline",
     signal: new AbortController().signal,
     runClaudeQuery: async () => buildValidMarkdown(),
   });
@@ -258,11 +521,225 @@ test("runStyleguideStage integration writes style.md with compact evidence artif
   assert.equal(await fileExists(output.result.evidenceAgentPath), true);
   assert.equal(await fileExists(output.result.typographyInventoryPath), true);
   assert.equal(await fileExists(join(runDir, "styleguide", "evidence.agent.json")), true);
+  assert.equal(await fileExists(join(runDir, "styleguide", "visual_context.json")), false);
   assert.equal(await fileExists(join(runDir, "styleguide", "synthesis.pass1.raw.txt")), true);
   assert.equal(output.result.query.failed, false);
 
   const markdown = await readFile(output.result.styleMdPath, "utf8");
   assert.match(markdown, /## Aesthetic Direction/);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runStyleguideStage vision mode writes visual_context and sends multimodal image payload", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeTinyPng(join(runDir, "full_screenshot.png"));
+
+  const c1 = await createComponentFixture(runId, "c1", 0);
+  const c2 = await createComponentFixture(runId, "c2", 260);
+  await writeTinyPng(c1.screenshotPath);
+  await writeTinyPng(c2.screenshotPath);
+
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  let sawImagePart = false;
+  let styleguidePrompt = "";
+  const output = await runStyleguideStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    signal: new AbortController().signal,
+    designMdMode: "vision",
+    runVisualContextQuery: async (queryInput) => {
+      sawImagePart = queryInput.content.some((part) => part.type === "image_url");
+      queryInput.onTokenUsage?.(123, 45);
+      return JSON.stringify({
+        design_personality: "Editorial and polished",
+        composition_rules: ["Use a dominant hero"],
+        color_usage: ["Use accent color for primary actions"],
+        typography_usage: ["Use display type for headlines"],
+        imagery_media: ["Use tight product-led crops"],
+        component_scenarios: ["Use cards for grouped content"],
+        responsive_notes: ["Stack media on mobile"],
+        page_recipes: ["Landing page starts with hero"],
+        dos: ["Preserve visual rhythm"],
+        donts: ["Avoid generic cards"],
+      });
+    },
+    runClaudeQuery: async (queryInput) => {
+      styleguidePrompt = queryInput.prompt;
+      return buildVisionMarkdown();
+    },
+  });
+
+  assert.equal(sawImagePart, true);
+  assert.match(styleguidePrompt, /visual_context\.json/);
+  assert.equal(await fileExists(join(runDir, "styleguide", "visual_context.json")), true);
+  assert.equal(output.result.designMdMode, "vision");
+  assert.equal(output.result.visualContextPath, join(runDir, "styleguide", "visual_context.json"));
+  assert.equal(output.result.query.inputTokens, 123);
+  assert.equal(output.result.query.outputTokens, 45);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runStyleguideStage vision mode falls back when screenshot pixels are unavailable", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeText(join(runDir, "full_screenshot.png"), "not-a-real-png");
+
+  const c1 = await createComponentFixture(runId, "c1", 0);
+  const c2 = await createComponentFixture(runId, "c2", 260);
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  let visualQueryCalled = false;
+  const output = await runStyleguideStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    signal: new AbortController().signal,
+    designMdMode: "vision",
+    runVisualContextQuery: async () => {
+      visualQueryCalled = true;
+      return "{}";
+    },
+    runClaudeQuery: async () => buildVisionMarkdown(),
+  });
+
+  const visualContext = JSON.parse(await readFile(join(runDir, "styleguide", "visual_context.json"), "utf8"));
+  assert.equal(visualQueryCalled, false);
+  assert.equal(visualContext.status, "failed");
+  assert.equal(output.result.query.failed, false);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runStyleguideStage vision mode requires Do's and Don'ts bullet lists", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeTinyPng(join(runDir, "full_screenshot.png"));
+
+  const c1 = await createComponentFixture(runId, "c1", 0);
+  const c2 = await createComponentFixture(runId, "c2", 260);
+  await writeTinyPng(c1.screenshotPath);
+  await writeTinyPng(c2.screenshotPath);
+
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  let styleguideCalls = 0;
+  const output = await runStyleguideStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    signal: new AbortController().signal,
+    designMdMode: "vision",
+    runVisualContextQuery: async () => JSON.stringify({
+      design_personality: "Editorial and polished",
+      composition_rules: ["Use a dominant hero"],
+      color_usage: ["Use accent color for primary actions"],
+      typography_usage: ["Use display type for headlines"],
+      imagery_media: ["Use tight product-led crops"],
+      component_scenarios: ["Use cards for grouped content"],
+      responsive_notes: ["Stack media on mobile"],
+      page_recipes: ["Landing page starts with hero"],
+      dos: ["Preserve visual rhythm"],
+      donts: ["Avoid generic cards"],
+    }),
+    runClaudeQuery: async () => {
+      styleguideCalls += 1;
+      return styleguideCalls === 1 ? buildVisionMarkdownWithProseDoDonts() : buildVisionMarkdown();
+    },
+  });
+
+  assert.equal(styleguideCalls, 2);
+  assert.match(output.result.styleMarkdown, /### Do's\n- /);
+  assert.match(output.result.styleMarkdown, /### Don'ts\n- /);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runStyleguideStage vision mode requires Navigation & Header System detail", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeTinyPng(join(runDir, "full_screenshot.png"));
+
+  const c1 = await createComponentFixture(runId, "c1", 0);
+  const c2 = await createComponentFixture(runId, "c2", 260);
+  await writeTinyPng(c1.screenshotPath);
+  await writeTinyPng(c2.screenshotPath);
+
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  let styleguideCalls = 0;
+  const output = await runStyleguideStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    signal: new AbortController().signal,
+    designMdMode: "vision",
+    runVisualContextQuery: async () => JSON.stringify({
+      design_personality: "Editorial and polished",
+      composition_rules: ["Use a dominant hero"],
+      color_usage: ["Use accent color for primary actions"],
+      typography_usage: ["Use display type for headlines"],
+      navigation_header: ["Use sticky top navigation with utility actions"],
+      imagery_media: ["Use tight product-led crops"],
+      component_scenarios: ["Use cards for grouped content"],
+      responsive_notes: ["Collapse navigation to hamburger drawer on mobile"],
+      page_recipes: ["Landing page starts with hero"],
+      dos: ["Preserve visual rhythm"],
+      donts: ["Avoid generic cards"],
+    }),
+    runClaudeQuery: async () => {
+      styleguideCalls += 1;
+      return styleguideCalls === 1 ? buildVisionMarkdownWithoutNavigation() : buildVisionMarkdown();
+    },
+  });
+
+  assert.equal(styleguideCalls, 2);
+  assert.match(output.result.styleMarkdown, /## Navigation & Header System/);
+  assert.match(output.result.styleMarkdown, /hamburger drawer|desktop behavior|utility actions/i);
 
   await rm(runDir, { recursive: true, force: true });
 });
@@ -315,6 +792,263 @@ test("runShowcaseStage integration writes showcase artifacts after styleguide st
   assert.equal(await fileExists(join(runDir, "styleguide", "showcase.html")), true);
   assert.equal(showcaseOutput.result.showcase.available, true);
   assert.equal(showcaseOutput.result.warning, undefined);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runShowcaseStage provides header nav context and accepts observed evidence panel", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeText(join(runDir, "full_screenshot.png"), "png");
+
+  const c1 = await createComponentFixture(runId, "site_header", 0);
+  const c2 = await createComponentFixture(runId, "feature_grid", 320);
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  const styleMdPath = join(runDir, "style.md");
+  const evidenceAgentPath = join(runDir, "styleguide", "evidence.agent.json");
+  await writeText(styleMdPath, buildVisionMarkdown());
+  await writeText(evidenceAgentPath, JSON.stringify({ ok: true }, null, 2));
+
+  let receivedPrompt = "";
+  const showcaseOutput = await runShowcaseStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    styleMdPath,
+    styleMarkdown: buildVisionMarkdown(),
+    evidenceAgentPath,
+    typographyInventory: [],
+    requiredTypographyFamilies: [],
+    signal: new AbortController().signal,
+    runClaudeQuery: async ({ prompt }) => {
+      receivedPrompt = prompt;
+      return buildShowcaseHtmlWithNavigationEvidence();
+    },
+  });
+
+  const promptInputRaw = await readFile(join(runDir, "styleguide", "showcase.prompt_input.json"), "utf8");
+  const promptInput = JSON.parse(promptInputRaw) as { navigation_header_component?: { component_id?: string } | null };
+  const showcaseHtml = await readFile(join(runDir, "styleguide", "showcase.html"), "utf8");
+
+  assert.equal(showcaseOutput.result.showcase.available, true);
+  assert.equal(promptInput.navigation_header_component?.component_id, "site_header");
+  assert.match(receivedPrompt, /navigation_header_component/);
+  assert.match(receivedPrompt, /render_observed_evidence_not_freehand_recreation/);
+  assert.match(showcaseHtml, /data-stylemd-nav-evidence="true"/);
+  assert.doesNotMatch(showcaseHtml, /data-stylemd-nav-recreation="true"/);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runShowcaseStage repairs visible debug selectors, DOM structure, and decimal px measurements", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeText(join(runDir, "full_screenshot.png"), "png");
+
+  const c1 = await createComponentFixture(runId, "site_header", 0);
+  const c2 = await createComponentFixture(runId, "feature_grid", 320);
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  const styleMdPath = join(runDir, "style.md");
+  const evidenceAgentPath = join(runDir, "styleguide", "evidence.agent.json");
+  await writeText(styleMdPath, buildVisionMarkdown());
+  await writeText(evidenceAgentPath, JSON.stringify({ ok: true }, null, 2));
+
+  let calls = 0;
+  const showcaseOutput = await runShowcaseStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    styleMdPath,
+    styleMarkdown: buildVisionMarkdown(),
+    evidenceAgentPath,
+    typographyInventory: [],
+    requiredTypographyFamilies: [],
+    signal: new AbortController().signal,
+    runClaudeQuery: async () => {
+      calls += 1;
+      return calls === 1 ? buildShowcaseHtmlWithDebugNavigationEvidence() : buildShowcaseHtmlWithNavigationEvidence();
+    },
+  });
+
+  const showcaseHtml = await readFile(join(runDir, "styleguide", "showcase.html"), "utf8");
+  assert.equal(showcaseOutput.result.showcase.available, true);
+  assert.equal(calls, 2);
+  assert.doesNotMatch(showcaseHtml, /Selector:|Annotated DOM Structure|15\.1778px|18\.9722px|-0\.151778px/i);
+  assert.match(showcaseHtml, /data-stylemd-nav-evidence="true"/);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runShowcaseStage repairs typography sections missing observed measurements", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeText(join(runDir, "full_screenshot.png"), "png");
+
+  const c1 = await createComponentFixture(runId, "hero_component", 0);
+  const c2 = await createComponentFixture(runId, "body_component", 260);
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  const styleMdPath = join(runDir, "style.md");
+  const evidenceAgentPath = join(runDir, "styleguide", "evidence.agent.json");
+  const localFontPath = join(runDir, "page_styles", "fonts", "example-sans.woff2");
+  const fontsManifestPath = join(runDir, "page_styles", "fonts.manifest.json");
+  const fontsLocalCssPath = join(runDir, "page_styles", "fonts.local.css");
+  await writeText(styleMdPath, buildVisionMarkdown());
+  await writeText(evidenceAgentPath, JSON.stringify({ ok: true }, null, 2));
+  await writeText(localFontPath, "font");
+  await writeText(
+    fontsManifestPath,
+    JSON.stringify({
+      run_id: runId,
+      entries: [{
+        family: "Example Sans",
+        weight: "400",
+        style: "normal",
+        localArtifactPath: localFontPath,
+        format: "woff2",
+        status: "localized",
+      }],
+      families: [{ family: "Example Sans", localized_sources: 1 }],
+    }, null, 2),
+  );
+  await writeText(
+    fontsLocalCssPath,
+    [
+      "@font-face {",
+      "  font-family: \"Example Sans\";",
+      "  font-style: normal;",
+      "  font-weight: 400;",
+      "  src: url(\"fonts/example-sans.woff2\") format(\"woff2\");",
+      "}",
+    ].join("\n"),
+  );
+
+  let calls = 0;
+  const showcaseOutput = await runShowcaseStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    styleMdPath,
+    styleMarkdown: buildVisionMarkdown(),
+    evidenceAgentPath,
+    typographyInventory: [{
+      family: "Example Sans",
+      usage_count: 3,
+      roles: ["Body copy"],
+      observed_sizes: ["16px"],
+      observed_line_heights: ["24px"],
+      observed_weights: ["400"],
+      samples: [{
+        role: "Body copy",
+        font_size: "16px",
+        line_height: "24px",
+        font_weight: "400",
+      }],
+    }],
+    requiredTypographyFamilies: [],
+    fontsManifestPath,
+    fontsLocalCssPath,
+    signal: new AbortController().signal,
+    runClaudeQuery: async () => {
+      calls += 1;
+      return calls === 1
+        ? buildShowcaseHtmlWithoutTypographyMeasurements()
+        : buildShowcaseHtmlWithTypographyMeasurements();
+    },
+  });
+
+  const showcaseHtml = await readFile(join(runDir, "styleguide", "showcase.html"), "utf8");
+  assert.equal(showcaseOutput.result.showcase.available, true);
+  assert.equal(calls, 2);
+  assert.match(showcaseHtml, /16px/);
+  assert.match(showcaseHtml, /line-height 24px/);
+  assert.match(showcaseHtml, /font-weight 400/);
+
+  await rm(runDir, { recursive: true, force: true });
+});
+
+test("runShowcaseStage repairs visible font loading implementation copy", async () => {
+  const runId = makeRunId();
+  const runDir = getStyleMdRunDir(runId);
+  await mkdir(join(runDir, "components"), { recursive: true });
+  await writeText(join(runDir, "full_screenshot.png"), "png");
+
+  const c1 = await createComponentFixture(runId, "c1", 0);
+  const c2 = await createComponentFixture(runId, "c2", 260);
+  const curatedManifestPath = join(runDir, "components", "components_manifest.curated.json");
+  const curatedManifest = buildCuratedManifest({
+    runId,
+    url: "https://example.com",
+    c1,
+    c2,
+    sourceManifestPath: curatedManifestPath,
+  });
+  await writeText(curatedManifestPath, JSON.stringify(curatedManifest, null, 2));
+
+  const styleguideOutput = await runStyleguideStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    signal: new AbortController().signal,
+    runClaudeQuery: async () => buildValidMarkdown(),
+  });
+
+  let calls = 0;
+  const showcaseOutput = await runShowcaseStage({
+    runId,
+    url: "https://example.com",
+    curatedManifestPath,
+    curatedManifest,
+    styleMdPath: styleguideOutput.result.styleMdPath,
+    styleMarkdown: styleguideOutput.result.styleMarkdown,
+    evidenceAgentPath: styleguideOutput.result.evidenceAgentPath,
+    typographyInventoryPath: styleguideOutput.result.typographyInventoryPath,
+    typographyInventory: styleguideOutput.result.typographyInventory,
+    requiredTypographyFamilies: styleguideOutput.result.requiredTypographyFamilies,
+    signal: new AbortController().signal,
+    runClaudeQuery: async () => {
+      calls += 1;
+      return calls === 1 ? buildShowcaseHtmlWithFontLoadingCopy() : buildValidShowcaseHtml();
+    },
+  });
+
+  const showcaseHtml = await readFile(join(runDir, "styleguide", "showcase.html"), "utf8");
+  assert.equal(showcaseOutput.result.showcase.available, true);
+  assert.equal(calls, 2);
+  assert.doesNotMatch(showcaseHtml, /Font Loading|WOFF2|fonts\.local\.css|system fallback/i);
 
   await rm(runDir, { recursive: true, force: true });
 });

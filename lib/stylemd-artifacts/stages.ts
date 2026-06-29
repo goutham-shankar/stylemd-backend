@@ -201,6 +201,31 @@ const STYLEMD_SCREENSHOT_DOWNSAMPLE_RATIO = 0.7;
 const STYLEMD_SCREENSHOT_MAX_WIDTH = 1800;
 const STYLEMD_SCREENSHOT_MAX_HEIGHT = 5000;
 
+type StyleMdBrandAssetRegionSet = {
+  documentWidth: number;
+  documentHeight: number;
+  regions: Array<{
+    label: string;
+    reason: string;
+    rect: {
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+    };
+  }>;
+};
+
+type StyleMdVisualPaletteSignal = {
+  hex: string;
+  areaWeight: number;
+  frequency: number;
+  roles: string[];
+  confidence: "confirmed" | "inferred" | "weak_signal";
+  source: "screenshot_atmosphere" | "visual_brand_asset";
+  sourceLabel?: string;
+};
+
 const PSEUDO_CRITICAL_PROPERTIES = [
   "content",
   ...AGENT_STYLE_PROPERTIES,
@@ -2063,20 +2088,40 @@ export async function runExtractStage(input: {
 
   // --- PHASE 1: DETERMINISTIC DESIGN TOKEN EXTRACTION ---
   const semanticManifest = await analyzeSemanticDesignSystem(page, runId);
-  const semanticArtifact = await writeStyleMdJson(runId, "semantic_analysis.json", semanticManifest);
-  artifacts.push(semanticArtifact);
-
   runIdLog(runId, `[PIPELINE] Semantic analysis complete. Scanned ${semanticManifest.metrics.totalElementsScanned} elements in ${semanticManifest.metrics.extractionDurationMs}ms.`);
 
   // --- PHASE 4: VISUAL REBALANCING ---
-  const fullScreenshotPath = artifacts.find(a => a.name === "full_screenshot.png")?.path;
-  if (fullScreenshotPath) {
+  const fullScreenshotPath = join(getStyleMdRunDir(runId), "full_screenshot.png");
+  let visualPalette: string[] = [];
+  let brandSignals: StyleMdVisualPaletteSignal[] = [];
+  try {
+    visualPalette = await analyzeScreenshotDominantColors(fullScreenshotPath);
+    const brandRegions = await collectBrandAssetRegions(page);
+    brandSignals = await analyzeScreenshotBrandAssetColors(fullScreenshotPath, brandRegions);
+    rebalancePaletteWithVisuals(semanticManifest, visualPalette, brandSignals);
+    runIdLog(
+      runId,
+      `[PIPELINE] Visual rebalancing complete. Detected atmospheric colors: ${visualPalette.join(", ")}. Brand asset colors: ${brandSignals.map((signal) => signal.hex).join(", ") || "none"}`,
+    );
+  } catch (e) {
+    runIdLog(runId, `[PIPELINE] Visual rebalancing failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+  }
+
+  const semanticArtifact = await writeStyleMdJson(runId, "semantic_analysis.json", semanticManifest);
+  artifacts.push(semanticArtifact);
+
+  if (brandSignals.length > 0) {
     try {
-      const visualPalette = await analyzeScreenshotDominantColors(fullScreenshotPath);
-      rebalancePaletteWithVisuals(semanticManifest, visualPalette);
-      runIdLog(runId, `[PIPELINE] Visual rebalancing complete. Detected atmospheric colors: ${visualPalette.join(", ")}`);
+      const visualSignalsArtifact = await writeStyleMdJson(runId, "visual_palette_signals.json", {
+        run_id: runId,
+        generated_at: new Date().toISOString(),
+        full_screenshot: "full_screenshot.png",
+        atmospheric_colors: visualPalette,
+        brand_asset_colors: brandSignals,
+      });
+      artifacts.push(visualSignalsArtifact);
     } catch (e) {
-      runIdLog(runId, `[PIPELINE] Visual rebalancing failed: ${e instanceof Error ? e.message : String(e)}`, "warn");
+      runIdLog(runId, `[PIPELINE] Failed to write visual palette signals: ${e instanceof Error ? e.message : String(e)}`, "warn");
     }
   }
 
@@ -2917,6 +2962,170 @@ async function analyzeSemanticDesignSystem(page: Page, runId: string): Promise<S
 }
 
 /**
+ * Finds visible logo/wordmark-like regions so screenshot colors from brand marks
+ * can be sampled separately from product photography and generic page chrome.
+ */
+async function collectBrandAssetRegions(page: Page): Promise<StyleMdBrandAssetRegionSet> {
+  return page.evaluate(() => {
+    const brandPattern = /logo|wordmark|brand|brandmark|monogram|identity|site[-_ ]?logo|navbar[-_ ]?brand|header[-_ ]?heading[-_ ]?logo|footer[-_ ]?logo/i;
+    const documentElement = document.documentElement;
+    const body = document.body;
+    const documentWidth = Math.max(
+      documentElement.scrollWidth,
+      body?.scrollWidth ?? 0,
+      window.innerWidth,
+    );
+    const documentHeight = Math.max(
+      documentElement.scrollHeight,
+      body?.scrollHeight ?? 0,
+      window.innerHeight,
+    );
+
+    function textForElement(element: Element): string {
+      const parent = element.parentElement;
+      const img = element instanceof HTMLImageElement ? element : null;
+      return [
+        element.getAttribute("alt"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("title"),
+        element.getAttribute("id"),
+        element.getAttribute("class"),
+        img?.currentSrc,
+        img?.src,
+        parent?.getAttribute("aria-label"),
+        parent?.getAttribute("id"),
+        parent?.getAttribute("class"),
+      ].filter(Boolean).join(" ");
+    }
+
+    function visibleRect(element: Element) {
+      const style = window.getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || Number.parseFloat(style.opacity || "1") <= 0.05) {
+        return null;
+      }
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 8 || rect.height < 8) return null;
+      if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight + documentHeight || rect.left > window.innerWidth + documentWidth) {
+        return null;
+      }
+      return {
+        left: rect.left + window.scrollX,
+        top: rect.top + window.scrollY,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+
+    const regions = Array.from(document.querySelectorAll("img, svg, [role='img']"))
+      .map((element) => {
+        const text = textForElement(element);
+        const rect = visibleRect(element);
+        if (!rect || !brandPattern.test(text)) return null;
+        const lower = text.toLowerCase();
+        const reason = lower.includes("logo")
+          ? "logo/wordmark signal"
+          : lower.includes("brand")
+            ? "brand asset signal"
+            : "identity asset signal";
+        const label = text
+          .replace(/^https?:\/\//, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 140);
+        return { label: label || element.tagName.toLowerCase(), reason, rect };
+      })
+      .filter((region): region is NonNullable<typeof region> => Boolean(region))
+      .sort((a, b) => {
+        const aFooter = a.rect.top > documentHeight * 0.55 ? 0 : 1;
+        const bFooter = b.rect.top > documentHeight * 0.55 ? 0 : 1;
+        if (aFooter !== bFooter) return aFooter - bFooter;
+        return (b.rect.width * b.rect.height) - (a.rect.width * a.rect.height);
+      })
+      .slice(0, 8);
+
+    return { documentWidth, documentHeight, regions };
+  });
+}
+
+function quantizedHexToRgb(hex: string): { r: number; g: number; b: number } {
+  return {
+    r: Number.parseInt(hex.slice(1, 3), 16),
+    g: Number.parseInt(hex.slice(3, 5), 16),
+    b: Number.parseInt(hex.slice(5, 7), 16),
+  };
+}
+
+function rgbDistance(a: string, b: string): number {
+  const ca = quantizedHexToRgb(a);
+  const cb = quantizedHexToRgb(b);
+  return Math.sqrt((ca.r - cb.r) ** 2 + (ca.g - cb.g) ** 2 + (ca.b - cb.b) ** 2);
+}
+
+function luma(r: number, g: number, b: number): number {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function saturation(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  return max === 0 ? 0 : (max - min) / max;
+}
+
+function hexFromRgb(r: number, g: number, b: number): string {
+  return `#${[r, g, b].map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function quantizeChannel(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value / 8) * 8));
+}
+
+async function dominantColorsFromBuffer(buffer: Buffer, options: {
+  maxColors: number;
+  skipLightNeutrals?: boolean;
+}): Promise<Array<{ hex: string; frequency: number; ratio: number }>> {
+  const { data, info } = await sharp(buffer)
+    .resize({ width: 360, height: 360, fit: "inside", withoutEnlargement: true })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const buckets = new Map<string, { count: number; r: number; g: number; b: number }>();
+  let visiblePixels = 0;
+  for (let i = 0; i < data.length; i += info.channels) {
+    const alpha = data[i + 3] ?? 255;
+    if (alpha < 24) continue;
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    if (options.skipLightNeutrals && luma(r, g, b) > 235 && saturation(r, g, b) < 0.18) continue;
+    visiblePixels += 1;
+    const key = hexFromRgb(quantizeChannel(r), quantizeChannel(g), quantizeChannel(b));
+    const bucket = buckets.get(key) ?? { count: 0, r: 0, g: 0, b: 0 };
+    bucket.count += 1;
+    bucket.r += r;
+    bucket.g += g;
+    bucket.b += b;
+    buckets.set(key, bucket);
+  }
+
+  const colors = [...buckets.values()]
+    .map((bucket) => ({
+      hex: hexFromRgb(bucket.r / bucket.count, bucket.g / bucket.count, bucket.b / bucket.count),
+      frequency: bucket.count,
+      ratio: bucket.count / Math.max(1, visiblePixels),
+    }))
+    .sort((a, b) => b.frequency - a.frequency);
+
+  const selected: Array<{ hex: string; frequency: number; ratio: number }> = [];
+  for (const color of colors) {
+    if (selected.some((existing) => rgbDistance(existing.hex, color.hex) < 18)) continue;
+    selected.push(color);
+    if (selected.length >= options.maxColors) break;
+  }
+  return selected;
+}
+
+/**
  * Resizes the screenshot to a 5x5 grid and extracts dominant pixel colors to get the visual "atmosphere".
  */
 async function analyzeScreenshotDominantColors(screenshotPath: string): Promise<string[]> {
@@ -2937,10 +3146,68 @@ async function analyzeScreenshotDominantColors(screenshotPath: string): Promise<
 }
 
 /**
+ * Samples brand-like screenshot regions so logo/wordmark colors are not dropped as image noise.
+ */
+async function analyzeScreenshotBrandAssetColors(
+  screenshotPath: string,
+  regionSet: StyleMdBrandAssetRegionSet,
+): Promise<StyleMdVisualPaletteSignal[]> {
+  if (regionSet.regions.length === 0) return [];
+  const metadata = await sharp(screenshotPath).metadata();
+  if (!metadata.width || !metadata.height || !regionSet.documentWidth || !regionSet.documentHeight) return [];
+
+  const scaleX = metadata.width / regionSet.documentWidth;
+  const scaleY = metadata.height / regionSet.documentHeight;
+  const signals: StyleMdVisualPaletteSignal[] = [];
+
+  for (const region of regionSet.regions) {
+    const left = Math.max(0, Math.floor(region.rect.left * scaleX));
+    const top = Math.max(0, Math.floor(region.rect.top * scaleY));
+    const width = Math.min(metadata.width - left, Math.ceil(region.rect.width * scaleX));
+    const height = Math.min(metadata.height - top, Math.ceil(region.rect.height * scaleY));
+    if (width < 6 || height < 6) continue;
+
+    const crop = await sharp(screenshotPath)
+      .extract({ left, top, width, height })
+      .png()
+      .toBuffer();
+    const colors = await dominantColorsFromBuffer(crop, {
+      maxColors: 3,
+      skipLightNeutrals: true,
+    });
+
+    for (const color of colors) {
+      if (color.frequency < 24 || color.ratio < 0.015) continue;
+      signals.push({
+        hex: color.hex,
+        areaWeight: Math.max(0.02, Math.min(0.3, color.ratio * 0.35)),
+        frequency: color.frequency,
+        roles: ["brand", "visual_brand_asset"],
+        confidence: "inferred",
+        source: "visual_brand_asset",
+        sourceLabel: `${region.reason}: ${region.label}`,
+      });
+    }
+  }
+
+  const deduped: StyleMdVisualPaletteSignal[] = [];
+  for (const signal of signals.sort((a, b) => b.frequency - a.frequency)) {
+    if (deduped.some((existing) => rgbDistance(existing.hex, signal.hex) < 18)) continue;
+    deduped.push(signal);
+    if (deduped.length >= 6) break;
+  }
+  return deduped;
+}
+
+/**
  * Merges visual colors into the semantic manifest if they are significant but missing.
  */
-function rebalancePaletteWithVisuals(manifest: StyleMdDesignTokenManifest, visualColors: string[]) {
-  visualColors.forEach(v => {
+function rebalancePaletteWithVisuals(
+  manifest: StyleMdDesignTokenManifest,
+  visualColors: string[],
+  brandSignals: StyleMdVisualPaletteSignal[] = [],
+) {
+  visualColors.forEach((v) => {
     const alreadyPresent = manifest.palette.primary.includes(v) || manifest.palette.background.includes(v);
     if (!alreadyPresent) {
       const isNew = !manifest.palette.allObserved.some(o => o.hex === v && o.areaWeight > 0.3);
@@ -2951,11 +3218,32 @@ function rebalancePaletteWithVisuals(manifest: StyleMdDesignTokenManifest, visua
           areaWeight: 0.5,
           frequency: 1,
           roles: ["background", "visual_atmosphere"],
-          confidence: "inferred"
+          confidence: "inferred",
+          source: "screenshot_atmosphere",
         });
       }
     }
   });
+
+  if (brandSignals.length > 0) {
+    manifest.palette.brand ??= [];
+  }
+  for (const signal of brandSignals) {
+    const alreadyObserved = manifest.palette.allObserved.some((observed) => rgbDistance(observed.hex, signal.hex) < 18);
+    if (!manifest.palette.brand?.some((hex) => rgbDistance(hex, signal.hex) < 18)) {
+      manifest.palette.brand?.push(signal.hex);
+    }
+    if (!alreadyObserved) {
+      manifest.palette.allObserved.unshift(signal);
+    } else {
+      const observed = manifest.palette.allObserved.find((entry) => rgbDistance(entry.hex, signal.hex) < 18);
+      if (observed) {
+        observed.roles = [...new Set([...observed.roles, "brand", "visual_brand_asset"])];
+        observed.source ??= signal.source;
+        observed.sourceLabel ??= signal.sourceLabel;
+      }
+    }
+  }
 }
 
 /**

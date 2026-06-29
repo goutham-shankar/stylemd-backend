@@ -77,19 +77,26 @@ async function buildCachedPayload(
 }
 
 const requestSchema = z.object({
-  url: z.string().url(),
+  url: z.string().trim().min(1),
   provider: z.enum(["claude", "kimi"]).optional().default("kimi"),
+  model: z.string().min(1).optional(),
   force: z.boolean().optional().default(false),
   userId: z.string().optional(),
 });
+
+function normalizeUrlInput(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return canonicalPageUrl(withProtocol);
+}
 
 export async function runStyleMd(req: Request, res: Response): Promise<void> {
   req.socket.setTimeout(0);
   res.setTimeout(0);
 
   try {
-    const { url, provider, force, userId } = requestSchema.parse(req.body);
-    const canonUrl = canonicalPageUrl(url);
+    const { url, provider, model, force, userId } = requestSchema.parse(req.body);
+    const canonUrl = normalizeUrlInput(url);
     const slug = slugFromUrl(canonUrl);
 
     // --- Cache hit (find LATEST run for this URL) ---
@@ -153,6 +160,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
               slug,
               runId: runIdValue,
               provider,
+              model: provider === "kimi" ? (model ?? "kimi-k2.5") : undefined,
               status: "running",
               styleMd: "",
               images: [],
@@ -180,7 +188,7 @@ export async function runStyleMd(req: Request, res: Response): Promise<void> {
     const startedAt = Date.now();
     void (async () => {
       try {
-        const result = await runSimplifiedStyleMdPipeline(canonUrl, provider, runIdValue);
+        const result = await runSimplifiedStyleMdPipeline(canonUrl, provider, runIdValue, userId, model);
 
         // Finalize: render → upload artifacts to R2 → patch the run doc with R2
         // keys → clean scratch dir. Without this, /api/stylemd runs never get
@@ -343,4 +351,3 @@ export async function listStyleMdRuns(req: Request, res: Response): Promise<void
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message: String(err) });
   }
 }
-

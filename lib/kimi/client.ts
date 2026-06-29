@@ -46,9 +46,17 @@ interface TokenUsage {
   output_tokens: number;
 }
 
+export type KimiUserContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+type KimiMessageContentPart =
+  | KimiUserContentPart
+  | { type: string; text?: string; tool_use_id?: string; content?: string; id?: string; name?: string; input?: Record<string, unknown> };
+
 interface KimiMessage {
   role: "user" | "assistant";
-  content: string | Array<{ type: string; text?: string; tool_use_id?: string; content?: string; id?: string; name?: string; input?: Record<string, unknown> }>;
+  content: string | KimiMessageContentPart[];
 }
 
 interface KimiResponse {
@@ -142,8 +150,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Kimi AI client using OpenAI-compatible API
- * Uses k2-thinking for unlimited reasoning steps
+ * Kimi AI client using OpenAI-compatible API.
  */
 export class KimiClient {
   private apiKey: string;
@@ -151,8 +158,9 @@ export class KimiClient {
   private model = "kimi-k2.5";
   private maxApiRetries = 5;
 
-  constructor(apiKey?: string) {
+  constructor(apiKey?: string, model?: string) {
     this.apiKey = apiKey || process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY || "";
+    this.model = model?.trim() || process.env.STYLEMD_KIMI_MODEL?.trim() || this.model;
     if (!this.apiKey) {
       throw new Error("KIMI_API_KEY or MOONSHOT_API_KEY environment variable not set");
     }
@@ -365,7 +373,7 @@ export class KimiClient {
     const maxSteps = options?.maxSteps || 300;
     const messages: KimiMessage[] = [{ role: "user", content: userMessage }];
 
-    console.log(`\uD83D\uDE80 [KIMI] Starting query with max ${maxSteps} tool steps (k2-thinking mode)`);
+    console.log(`\uD83D\uDE80 [KIMI] Starting query with max ${maxSteps} tool steps (model: ${this.model})`);
     console.log(`\uD83D\uDCDA [KIMI] Available tools: ${tools.map((t) => t.function.name).join(", ")}`);
 
     const totalTokens = { input_tokens: 0, output_tokens: 0 };
@@ -525,6 +533,46 @@ export class KimiClient {
 
     console.log(`\n\u26A0\uFE0F  [KIMI] Query reached max steps (${maxSteps})`);
     return { text: "", tokenUsage: totalTokens };
+  }
+
+  /**
+   * Query Kimi once with multimodal user content.
+   *
+   * This is intentionally separate from the tool loop used by curation/styleguide:
+   * visual context should be compact and bounded, not resent on every tool step.
+   */
+  async queryMultimodal(
+    systemPrompt: string,
+    content: KimiUserContentPart[],
+    options?: {
+      onToken?: (tokenUsage: TokenUsage) => void;
+    },
+  ): Promise<{ text: string; tokenUsage: TokenUsage }> {
+    const response = await this.callAPI(systemPrompt, [{ role: "user", content }], []);
+    const usage = {
+      input_tokens: response.usage.prompt_tokens,
+      output_tokens: response.usage.completion_tokens,
+    };
+    options?.onToken?.(usage);
+
+    const message = response.choices[0]?.message;
+    if (!message) {
+      return { text: "", tokenUsage: usage };
+    }
+
+    if (typeof message.content === "string") {
+      return { text: message.content.trim(), tokenUsage: usage };
+    }
+
+    const text = Array.isArray(message.content)
+      ? message.content
+        .filter((item) => item.type === "text" && typeof item.text === "string")
+        .map((item) => item.text)
+        .join("\n")
+        .trim()
+      : "";
+
+    return { text, tokenUsage: usage };
   }
 
   /**

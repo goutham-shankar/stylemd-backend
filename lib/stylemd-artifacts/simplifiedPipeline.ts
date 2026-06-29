@@ -48,6 +48,7 @@ import {
   type StyleMdArtifactRecord,
   type StyleMdComponentEntry,
   type StyleMdCuratedManifest,
+  type StyleMdDesignMdMode,
   type StyleMdPipelineConfig,
   type StyleMdPipelineStageName,
   type StyleMdProvider,
@@ -102,45 +103,66 @@ function buildCuratedManifestFromComponents(
   };
 }
 
+export interface RunSimplifiedStyleMdPipelineOptions {
+  designMdMode?: StyleMdDesignMdMode;
+  skipMongo?: boolean;
+}
+
 export async function runSimplifiedStyleMdPipeline(
   url: string,
   provider: StyleMdProvider = "kimi",
   forcedRunId?: string,
   userId?: string,
+  modelOverride?: string,
+  options: RunSimplifiedStyleMdPipelineOptions = {},
 ): Promise<{
   runId: string;
   styleMd: string;
   screenshot: string;
   model: string;
 }> {
-  // Step 3: Auto-recover in pipeline
-  await connectDB();
-  if (mongoose.connection.readyState !== 1) {
-    throw new Error("Mongo not connected after retry");
-  }
-
   const id = forcedRunId || runId();
   const runIdValue = id;
   const abortController = new AbortController();
   const signal = abortController.signal;
-  const runtime = resolveStyleMdRuntimeConfig(provider);
+  const runtime = resolveStyleMdRuntimeConfig(provider, { model: modelOverride });
+  const designMdMode = options.designMdMode ?? "vision";
+  const skipMongo = options.skipMongo ?? process.env.STYLEMD_SKIP_MONGO === "1";
+
+  // Step 3: Auto-recover in pipeline
+  if (!skipMongo) {
+    await connectDB();
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error("Mongo not connected after retry");
+    }
+  }
+
+  async function maybeMongoKeepAlive(): Promise<void> {
+    if (!skipMongo) {
+      await mongoKeepAlive();
+    }
+  }
 
   // Step 1 & 2: Collection-based Keep-Alive Ping at 10s frequency
-  const keepAliveInterval = setInterval(async () => {
-    await mongoKeepAlive();
-  }, 10000);
+  const keepAliveInterval = skipMongo
+    ? null
+    : setInterval(async () => {
+      await mongoKeepAlive();
+    }, 10000);
 
   // 🔴 Mark run pending so the DB record exists for the screenshot
-  try {
-    await markStyleMdRunPendingInMongo({
-      url,
-      runId: runIdValue,
-      provider: runtime.provider,
-      model: runtime.model,
-      userId,
-    });
-  } catch (e) {
-    console.warn("[PIPELINE] early pending persist failed, continuing under unstable network", e);
+  if (!skipMongo) {
+    try {
+      await markStyleMdRunPendingInMongo({
+        url,
+        runId: runIdValue,
+        provider: runtime.provider,
+        model: runtime.model,
+        userId,
+      });
+    } catch (e) {
+      console.warn("[PIPELINE] early pending persist failed, continuing under unstable network", e);
+    }
   }
 
 
@@ -149,7 +171,7 @@ export async function runSimplifiedStyleMdPipeline(
   const canonUrl = canonicalPageUrl(url);
   const scraped = await scrape(canonUrl);
   
-  if (scraped) {
+  if (scraped && !skipMongo) {
     runIdLog(runIdValue, `[DEBUG] Scrape result: title="${scraped.title}", textLength=${scraped.contentText?.length ?? 0}, imagesCount=${scraped.images?.length ?? 0}`);
   } else {
     runIdLog(runIdValue, `[DEBUG] Scrape FAILED (returned null) for ${url}`, "warn");
@@ -191,9 +213,10 @@ export async function runSimplifiedStyleMdPipeline(
 
   let state = createInitialRunState(runIdValue, url, runtime.provider, runtime.model);
   let aggregateTokenUsage = createEmptyKimiTokenUsage();
+  const emittedArtifactPaths = new Set<string>();
 
   // Use Kimi for curation and generation stages to reduce costs and use high-reasoning models
-  const kimiRuntime = resolveStyleMdRuntimeConfig("kimi");
+  const kimiRuntime = resolveStyleMdRuntimeConfig("kimi", { model: modelOverride });
 
   async function emitAndLog(event: StyleMdPipelineEventPayload): Promise<void> {
     const fullEvent = emitEvent(event as Parameters<typeof emitEvent>[0]);
@@ -205,6 +228,19 @@ export async function runSimplifiedStyleMdPipeline(
     state = updateRunState(state, {
       artifacts: mergeArtifact(state.artifacts, stateArtifact),
     });
+
+    for (const artifact of state.artifacts) {
+      if (emittedArtifactPaths.has(artifact.path)) {
+        continue;
+      }
+      emittedArtifactPaths.add(artifact.path);
+      await emitAndLog({
+        type: "stylemd_artifact_ready",
+        source: "system",
+        runId: runIdValue,
+        artifact,
+      });
+    }
   }
 
   function registerArtifacts(artifacts: StyleMdArtifactRecord[]): void {
@@ -473,7 +509,7 @@ export async function runSimplifiedStyleMdPipeline(
       };
 
       await publishState();
-      await mongoKeepAlive();
+      await maybeMongoKeepAlive();
       return output.result;
     });
 
@@ -496,7 +532,7 @@ export async function runSimplifiedStyleMdPipeline(
         },
       });
       await publishState();
-      await mongoKeepAlive();
+      await maybeMongoKeepAlive();
       return output.result;
     });
 
@@ -520,7 +556,7 @@ export async function runSimplifiedStyleMdPipeline(
         },
       });
       await publishState();
-      await mongoKeepAlive();
+      await maybeMongoKeepAlive();
       return output.result;
     });
 
@@ -571,12 +607,13 @@ export async function runSimplifiedStyleMdPipeline(
           responsiveHoverEvidencePath,
           signal,
           runtime: kimiRuntime,
+          designMdMode,
         });
 
         registerArtifacts(output.artifacts);
         aggregateTokenUsage = accumulateKimiTokenUsage(aggregateTokenUsage, output.result.query);
         await publishState();
-        await mongoKeepAlive();
+        await maybeMongoKeepAlive();
         return output.result;
       });
     } catch (error) {
@@ -619,7 +656,7 @@ export async function runSimplifiedStyleMdPipeline(
         showcase: output.result.showcase,
       });
       await publishState();
-      await mongoKeepAlive();
+      await maybeMongoKeepAlive();
       return output.result;
     });
 
@@ -661,6 +698,7 @@ export async function runSimplifiedStyleMdPipeline(
         ...state.warnings,
         `Used ${kimiRuntime.provider} for curation and generation stages.`,
       ],
+      designMdMode,
       artifacts: state.artifacts,
       metrics: state.metrics,
       tokenUsage: aggregateTokenUsage,
@@ -674,32 +712,34 @@ export async function runSimplifiedStyleMdPipeline(
     });
     await publishState();
 
-    if (mongoose.connection.readyState !== 1) {
+    if (!skipMongo && mongoose.connection.readyState !== 1) {
       await connectDB();
     }
 
-    try {
-      await persistStyleMdAfterGeneration({
-        url,
-        runId: runIdValue,
-        provider: runtime.provider,
-        model: runtime.model,
-        styleMd: styleMdContent,
-        designTokens,
-        screenshot: screenshotBase64Var,
-        runStatus: summary.status,
-        tokenUsage: summary.tokenUsage,
-        costEstimate: summary.costEstimate,
-        brandAssets: scraped?.brandAssets,
-        extractionMetadata: extractionMetadataVar,
-        title: scraped?.title,
-        description: scraped?.description,
-        h1: scraped?.h1,
-        canonical: scraped?.canonical,
-      });
-    } catch (dbErr) {
-      console.error(`Final persist failed: ${errorToMessage(dbErr)}`);
-      throw dbErr;
+    if (!skipMongo) {
+      try {
+        await persistStyleMdAfterGeneration({
+          url,
+          runId: runIdValue,
+          provider: runtime.provider,
+          model: runtime.model,
+          styleMd: styleMdContent,
+          designTokens,
+          screenshot: screenshotBase64Var,
+          runStatus: summary.status,
+          tokenUsage: summary.tokenUsage,
+          costEstimate: summary.costEstimate,
+          brandAssets: scraped?.brandAssets,
+          extractionMetadata: extractionMetadataVar,
+          title: scraped?.title,
+          description: scraped?.description,
+          h1: scraped?.h1,
+          canonical: scraped?.canonical,
+        });
+      } catch (dbErr) {
+        console.error(`Final persist failed: ${errorToMessage(dbErr)}`);
+        throw dbErr;
+      }
     }
 
     await emitAndLog({
@@ -723,9 +763,10 @@ export async function runSimplifiedStyleMdPipeline(
     };
   } catch (error) {
     const canceled = signal.aborted || isAbortError(error);
+    const finalStatus = canceled ? "canceled" : "failed";
 
     state = updateRunState(state, {
-      status: canceled ? "canceled" : "failed",
+      status: finalStatus,
       completedAt: nowIso(),
       error: errorToMessage(error),
     });
@@ -740,6 +781,7 @@ export async function runSimplifiedStyleMdPipeline(
       completedAt: state.completedAt,
       error: state.error,
       warnings: state.warnings,
+      designMdMode,
       artifacts: state.artifacts,
       metrics: state.metrics,
       tokenUsage: aggregateTokenUsage,
@@ -752,29 +794,57 @@ export async function runSimplifiedStyleMdPipeline(
     });
     await publishState();
 
+    await emitAndLog({
+      type: "stylemd_action",
+      source: "system",
+      runId: runIdValue,
+      level: "error",
+      message: canceled ? "StyleMD run canceled." : "StyleMD run failed.",
+      detail: { error: state.error },
+    });
+    await emitAndLog({
+      type: "stylemd_run_completed",
+      source: "system",
+      runId: runIdValue,
+      provider: runtime.provider,
+      model: runtime.model,
+      status: finalStatus,
+      completedAt: state.completedAt,
+      error: state.error,
+      warnings: state.warnings,
+      showcase: {
+        available: false,
+        canonicalUrl: `/styleguide/${runIdValue}`,
+        latestUrl: "/styleguide",
+      },
+    });
+
     // --- PERSIST FAILURE TO MONGODB ---
-    try {
-      const finalStatus = canceled ? "canceled" : "failed";
-      console.log(`[PIPELINE] marking run ${finalStatus}: ${runIdValue}`);
-      await connectDB();
-      await safeWrite(() =>
-        StyleMdRun.updateOne(
-          { runId: runIdValue },
-          {
-            $set: {
-              status: finalStatus,
-              updatedAt: new Date()
+    if (!skipMongo) {
+      try {
+        console.log(`[PIPELINE] marking run ${finalStatus}: ${runIdValue}`);
+        await connectDB();
+        await safeWrite(() =>
+          StyleMdRun.updateOne(
+            { runId: runIdValue },
+            {
+              $set: {
+                status: finalStatus,
+                updatedAt: new Date()
+              }
             }
-          }
-        )
-      );
-    } catch (dbErr) {
-      console.warn(`[PIPELINE] Failed to persist failure status to MongoDB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+          )
+        );
+      } catch (dbErr) {
+        console.warn(`[PIPELINE] Failed to persist failure status to MongoDB: ${dbErr instanceof Error ? dbErr.message : String(dbErr)}`);
+      }
     }
 
     throw error;
   } finally {
-    clearInterval(keepAliveInterval);
+    if (keepAliveInterval) {
+      clearInterval(keepAliveInterval);
+    }
     signal.removeEventListener("abort", onAbort);
     await closeBrowser();
   }

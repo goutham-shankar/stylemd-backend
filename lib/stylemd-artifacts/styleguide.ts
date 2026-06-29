@@ -13,6 +13,11 @@ import {
   writeStyleMdJson,
   writeStyleMdText,
 } from "@/lib/stylemd-artifacts/artifacts";
+import {
+  runStyleMdVisualContext,
+  type StyleMdDesignMdMode,
+  type VisualContextQuery,
+} from "@/lib/stylemd-artifacts/visualContext";
 import type { KimiTokenUsage } from "@/lib/services/kimiUsage";
 import {
   resolveStyleMdRuntimeConfig,
@@ -27,6 +32,7 @@ import {
 } from "@/lib/stylemd-artifacts/helpers";
 import type {
   StyleMdArtifactRecord,
+  StyleMdComponentEntry,
   StyleMdCuratedManifest,
   StyleMdFontManifest,
   StyleMdResponsiveHoverEvidence,
@@ -68,10 +74,7 @@ type StyleguidePromptInput = {
   curated_manifest: string;
   evidence_agent: string;
   responsive_hover_evidence: string | null;
-  typography_inventory: Array<{
-    family: string;
-    usage_count: number;
-  }>;
+  typography_inventory: TypographyInventoryEntry[];
   required_typography_families: string[];
   unit_count: number;
   units: Array<{
@@ -80,6 +83,8 @@ type StyleguidePromptInput = {
     study_label: string;
     component_ids: string[];
   }>;
+  design_md_mode?: "vision";
+  visual_context?: string | null;
 };
 
 type StyleguideAgentEvidence = {
@@ -130,6 +135,7 @@ type StyleguideAgentEvidence = {
           node_path: string;
           tag_name: string;
           text_sample: string;
+          text_styles: Record<string, string>;
           rect: {
             top: number;
             left: number;
@@ -150,10 +156,8 @@ type ShowcasePromptInput = {
   style_md: string;
   full_screenshot: string;
   evidence_agent: string;
-  typography_inventory: Array<{
-    family: string;
-    usage_count: number;
-  }>;
+  navigation_header_component: ShowcaseNavigationHeaderComponent | null;
+  typography_inventory: TypographyInventoryEntry[];
   required_typography_families: string[];
   font_assets: {
     manifest: string | null;
@@ -164,6 +168,49 @@ type ShowcasePromptInput = {
     disallow_scripts: true;
     static_html_only: true;
   };
+};
+
+type ShowcaseNavigationHeaderComponent = {
+  component_id: string;
+  study_label: string;
+  selector: string;
+  tag_name: string;
+  rect: {
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    bottom: number;
+  };
+  dom: string;
+  styles: string;
+  style_tree: string;
+  reference_screenshot: string;
+  output_requirement: "render_observed_evidence_not_freehand_recreation";
+};
+
+type TypographyInventorySample = {
+  role: string;
+  component_id?: string;
+  node_path?: string;
+  tag_name?: string;
+  text_sample?: string;
+  font_size?: string;
+  line_height?: string;
+  font_weight?: string;
+  letter_spacing?: string;
+  text_transform?: string;
+  color?: string;
+};
+
+type TypographyInventoryEntry = {
+  family: string;
+  usage_count: number;
+  roles?: string[];
+  observed_sizes?: string[];
+  observed_line_heights?: string[];
+  observed_weights?: string[];
+  samples?: TypographyInventorySample[];
 };
 
 type ShowcaseSandboxValidation = {
@@ -190,6 +237,8 @@ type RunStyleguideInput = {
   signal: AbortSignal;
   runtime?: StyleMdRuntimeConfig;
   runClaudeQuery?: ClaudeStyleguideQuery;
+  designMdMode?: StyleMdDesignMdMode;
+  runVisualContextQuery?: VisualContextQuery;
 };
 
 type RunShowcaseInput = {
@@ -202,10 +251,7 @@ type RunShowcaseInput = {
   styleMarkdown?: string;
   evidenceAgentPath: string;
   typographyInventoryPath?: string;
-  typographyInventory?: Array<{
-    family: string;
-    usage_count: number;
-  }>;
+  typographyInventory?: TypographyInventoryEntry[];
   requiredTypographyFamilies?: string[];
   fontsManifestPath?: string;
   fontsLocalCssPath?: string;
@@ -353,6 +399,107 @@ function toRunRelative(runDir: string, absolutePath: string): string {
   return value.split("\\").join("/");
 }
 
+function pickNavigationHeaderComponent(
+  runDir: string,
+  curatedManifest: StyleMdCuratedManifest,
+): ShowcaseNavigationHeaderComponent | null {
+  let best: {
+    score: number;
+    unitLabel: string;
+    component: StyleMdComponentEntry;
+  } | null = null;
+
+  const scoreText = (value: string): number => {
+    const normalized = value.toLowerCase();
+    let score = 0;
+    if (/\bsite[-_\s]?header\b|#section-header|shopify-section-header|global\s*>\s*nav/.test(normalized)) {
+      score += 16;
+    }
+    if (/\bheader\b/.test(normalized)) {
+      score += 10;
+    }
+    if (/\bnav\b|\bnavbar\b|\bnavigation\b/.test(normalized)) {
+      score += 10;
+    }
+    if (/\bmenu\b|\bmega[-_\s]?menu\b|\bdropdown\b|\bdrawer\b/.test(normalized)) {
+      score += 5;
+    }
+    if (/\bannouncement\b|\bpromo\b|\btop[-_\s]?bar\b/.test(normalized)) {
+      score += 3;
+    }
+    if (/\bfooter\b/.test(normalized)) {
+      score -= 18;
+    }
+    return score;
+  };
+
+  for (const unit of curatedManifest.units) {
+    for (const component of unit.components) {
+      const identityText = [
+        unit.study_label,
+        component.componentId,
+        component.selector,
+        component.tagName,
+      ].join(" ");
+      const strongIdentitySignal =
+        /\bsite[-_\s]?header\b|#section-header|shopify-section-header|\bheader\b|\bnav\b|\bnavbar\b|\bnavigation\b|\bmenu\b|\bmega[-_\s]?menu\b|\bdropdown\b|\bdrawer\b/i
+          .test(identityText);
+      if (!strongIdentitySignal) {
+        continue;
+      }
+      let score = scoreText(`${identityText} ${unit.reason}`);
+      const rect = component.rect;
+      if (component.tagName.toLowerCase() === "header" || component.tagName.toLowerCase() === "nav") {
+        score += 8;
+      }
+      if (rect.top <= 140) {
+        score += 5;
+      } else if (rect.top <= 260) {
+        score += 2;
+      }
+      if (rect.height > 0 && rect.height <= 220) {
+        score += 4;
+      } else if (rect.height <= 360) {
+        score += 2;
+      }
+      if (rect.width >= 900) {
+        score += 2;
+      }
+      if (score > (best?.score ?? 0)) {
+        best = {
+          score,
+          unitLabel: unit.study_label,
+          component,
+        };
+      }
+    }
+  }
+
+  if (!best || best.score < 8) {
+    return null;
+  }
+
+  const component = best.component;
+  return {
+    component_id: component.componentId,
+    study_label: best.unitLabel,
+    selector: component.selector,
+    tag_name: component.tagName,
+    rect: {
+      top: component.rect.top,
+      left: component.rect.left,
+      width: component.rect.width,
+      height: component.rect.height,
+      bottom: component.rect.bottom,
+    },
+    dom: toRunRelative(runDir, component.agentDomPath || component.domPath),
+    styles: toRunRelative(runDir, component.agentStylesPath || component.stylesPath),
+    style_tree: toRunRelative(runDir, component.agentStyleTreePath || component.styleTreePath),
+    reference_screenshot: toRunRelative(runDir, component.screenshotPath),
+    output_requirement: "render_observed_evidence_not_freehand_recreation",
+  };
+}
+
 function cleanSnippet(value: string, maxChars: number): string {
   return value.replace(/\s+/g, " ").trim().slice(0, maxChars);
 }
@@ -402,13 +549,66 @@ function isGenericFamily(token: string): boolean {
   return GENERIC_FONT_FAMILIES.has(normalizeFontFamily(token).toLowerCase());
 }
 
-function buildTypographyInventory(evidence: StyleguideAgentEvidence): Array<{
-  family: string;
-  usage_count: number;
-}> {
-  const usage = new Map<string, number>();
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
-  const captureFamilyUsage = (raw: string | undefined): void => {
+function humanizeCssMeasurement(value: unknown, kind: "length" | "letter-spacing" = "length"): string | undefined {
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  const px = /^(-?\d+(?:\.\d+)?)px$/i.exec(trimmed);
+  if (!px) {
+    return trimmed;
+  }
+  const numeric = Number(px[1]);
+  if (!Number.isFinite(numeric)) {
+    return trimmed;
+  }
+  if (kind === "letter-spacing") {
+    if (Math.abs(numeric) < 0.05) {
+      return "normal";
+    }
+    return numeric < 0 ? "tight" : "loose";
+  }
+  return `${Math.round(numeric)}px`;
+}
+
+function typographySampleFromStyles(styles: Record<string, string>): Pick<
+  TypographyInventorySample,
+  "font_size" | "line_height" | "font_weight" | "letter_spacing" | "text_transform" | "color"
+> {
+  return {
+    font_size: humanizeCssMeasurement(styles["font-size"]),
+    line_height: humanizeCssMeasurement(styles["line-height"]),
+    font_weight: stringOrUndefined(styles["font-weight"]),
+    letter_spacing: humanizeCssMeasurement(styles["letter-spacing"], "letter-spacing"),
+    text_transform: stringOrUndefined(styles["text-transform"]),
+    color: stringOrUndefined(styles.color),
+  };
+}
+
+function roleFromTagAndText(tagName: string | undefined, textSample: string | undefined): string {
+  const tag = (tagName ?? "").toLowerCase();
+  const text = (textSample ?? "").trim();
+  if (/^h[1-2]$/.test(tag)) return "Display heading";
+  if (/^h[3-6]$/.test(tag)) return "Section heading";
+  if (tag === "button" || /\b(cta|shop|buy|add to cart|checkout)\b/i.test(text)) return "Button / CTA";
+  if (tag === "a" || /\b(menu|nav|account|cart|search)\b/i.test(text)) return "Navigation / link";
+  if (tag === "label" || tag === "input" || tag === "select" || tag === "textarea") return "Form UI";
+  if (tag === "small" || /\b(free shipping|announcement|caption|badge)\b/i.test(text)) return "Microcopy / caption";
+  if (tag === "p") return "Body copy";
+  return "Text";
+}
+
+function buildTypographyInventory(evidence: StyleguideAgentEvidence): TypographyInventoryEntry[] {
+  const usage = new Map<string, TypographyInventoryEntry>();
+
+  const captureFamilyUsage = (
+    raw: string | undefined,
+    sample: Omit<TypographyInventorySample, "role"> & { role?: string } = {},
+  ): void => {
     if (!raw) {
       return;
     }
@@ -417,19 +617,69 @@ function buildTypographyInventory(evidence: StyleguideAgentEvidence): Array<{
       if (!normalized || isGenericFamily(normalized)) {
         continue;
       }
-      usage.set(normalized, (usage.get(normalized) ?? 0) + 1);
+      const entry = usage.get(normalized) ?? {
+        family: normalized,
+        usage_count: 0,
+        roles: [],
+        observed_sizes: [],
+        observed_line_heights: [],
+        observed_weights: [],
+        samples: [],
+      };
+      entry.usage_count += 1;
+      const role = sample.role ?? "Text";
+      const roles = entry.roles ?? (entry.roles = []);
+      const observedSizes = entry.observed_sizes ?? (entry.observed_sizes = []);
+      const observedLineHeights = entry.observed_line_heights ?? (entry.observed_line_heights = []);
+      const observedWeights = entry.observed_weights ?? (entry.observed_weights = []);
+      const samples = entry.samples ?? (entry.samples = []);
+      if (!roles.includes(role)) roles.push(role);
+      if (sample.font_size && !observedSizes.includes(sample.font_size)) {
+        observedSizes.push(sample.font_size);
+      }
+      if (sample.line_height && !observedLineHeights.includes(sample.line_height)) {
+        observedLineHeights.push(sample.line_height);
+      }
+      if (sample.font_weight && !observedWeights.includes(sample.font_weight)) {
+        observedWeights.push(sample.font_weight);
+      }
+      if (samples.length < 8) {
+        samples.push({ role, ...sample });
+      }
+      usage.set(normalized, entry);
     }
   };
 
   for (const unit of evidence.units) {
     for (const component of unit.components) {
-      captureFamilyUsage(component.evidence.styles["font-family"]);
-      captureFamilyUsage(component.evidence.pseudo.before["font-family"]);
+      captureFamilyUsage(component.evidence.styles["font-family"], {
+        role: roleFromTagAndText(component.tag_name, component.evidence.dom_excerpt),
+        component_id: component.component_id,
+        tag_name: component.tag_name,
+        text_sample: cleanSnippet(component.evidence.dom_excerpt, 80),
+        ...typographySampleFromStyles(component.evidence.styles),
+      });
+      captureFamilyUsage(component.evidence.pseudo.before["font-family"], {
+        role: "Pseudo label",
+        component_id: component.component_id,
+        tag_name: component.tag_name,
+        text_sample: cleanSnippet(component.evidence.pseudo.before.content ?? "", 80),
+        ...typographySampleFromStyles(component.evidence.pseudo.before),
+      });
+      for (const node of component.evidence.style_tree_head) {
+        captureFamilyUsage(node.text_styles["font-family"], {
+          role: roleFromTagAndText(node.tag_name, node.text_sample),
+          component_id: component.component_id,
+          node_path: node.node_path,
+          tag_name: node.tag_name,
+          text_sample: node.text_sample,
+          ...typographySampleFromStyles(node.text_styles),
+        });
+      }
     }
   }
 
-  return [...usage.entries()]
-    .map(([family, usage_count]) => ({ family, usage_count }))
+  return [...usage.values()]
     .sort((a, b) => {
       if (b.usage_count !== a.usage_count) {
         return b.usage_count - a.usage_count;
@@ -439,10 +689,7 @@ function buildTypographyInventory(evidence: StyleguideAgentEvidence): Array<{
 }
 
 function deriveRequiredTypographyFamilies(
-  inventory: Array<{
-    family: string;
-    usage_count: number;
-  }>,
+  inventory: TypographyInventoryEntry[],
 ): string[] {
   if (inventory.length === 0) {
     return [];
@@ -454,6 +701,134 @@ function deriveRequiredTypographyFamilies(
     .filter((entry) => entry.usage_count >= threshold)
     .slice(0, 6)
     .map((entry) => entry.family);
+}
+
+function buildTypographyInventoryFromSemanticAnalysis(value: unknown): TypographyInventoryEntry[] {
+  const usage = new Map<string, TypographyInventoryEntry>();
+
+  const captureFamilyUsage = (
+    raw: unknown,
+    count = 1,
+    sample: Omit<TypographyInventorySample, "role"> & { role?: string } = {},
+  ): void => {
+    if (typeof raw !== "string") {
+      return;
+    }
+    for (const token of parseFontFamilyTokens(raw)) {
+      const normalized = normalizeFontFamily(token);
+      if (!normalized || isGenericFamily(normalized)) {
+        continue;
+      }
+      const entry = usage.get(normalized) ?? {
+        family: normalized,
+        usage_count: 0,
+        roles: [],
+        observed_sizes: [],
+        observed_line_heights: [],
+        observed_weights: [],
+        samples: [],
+      };
+      entry.usage_count += Math.max(1, count);
+      const role = sample.role ?? "Text";
+      const roles = entry.roles ?? (entry.roles = []);
+      const observedSizes = entry.observed_sizes ?? (entry.observed_sizes = []);
+      const observedLineHeights = entry.observed_line_heights ?? (entry.observed_line_heights = []);
+      const observedWeights = entry.observed_weights ?? (entry.observed_weights = []);
+      const samples = entry.samples ?? (entry.samples = []);
+      if (!roles.includes(role)) roles.push(role);
+      if (sample.font_size && !observedSizes.includes(sample.font_size)) {
+        observedSizes.push(sample.font_size);
+      }
+      if (sample.line_height && !observedLineHeights.includes(sample.line_height)) {
+        observedLineHeights.push(sample.line_height);
+      }
+      if (sample.font_weight && !observedWeights.includes(sample.font_weight)) {
+        observedWeights.push(sample.font_weight);
+      }
+      if (samples.length < 8) {
+        samples.push({ role, ...sample });
+      }
+      usage.set(normalized, entry);
+    }
+  };
+
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const typography = (value as {
+    typography?: {
+      display?: unknown;
+      body?: unknown;
+      ui?: unknown;
+      scales?: unknown;
+    };
+  }).typography;
+  if (!typography || typeof typography !== "object") {
+    return [];
+  }
+
+  const captureList = (items: unknown, count: number): void => {
+    if (!Array.isArray(items)) {
+      return;
+    }
+    for (const item of items) {
+      captureFamilyUsage(item, count);
+    }
+  };
+
+  captureList(typography.display, 3);
+  captureList(typography.body, 2);
+  captureList(typography.ui, 2);
+
+  if (Array.isArray(typography.scales)) {
+    for (const scale of typography.scales) {
+      if (!scale || typeof scale !== "object") {
+        continue;
+      }
+      const record = scale as {
+        fontFamily?: unknown;
+        font_family?: unknown;
+        family?: unknown;
+        usageCount?: unknown;
+        role?: unknown;
+        tag?: unknown;
+        fontSize?: unknown;
+        font_size?: unknown;
+        lineHeight?: unknown;
+        line_height?: unknown;
+        fontWeight?: unknown;
+        font_weight?: unknown;
+        letterSpacing?: unknown;
+        letter_spacing?: unknown;
+        textTransform?: unknown;
+        text_transform?: unknown;
+        color?: unknown;
+      };
+      const usageCount = typeof record.usageCount === "number" ? record.usageCount : 1;
+      captureFamilyUsage(record.fontFamily ?? record.font_family ?? record.family, usageCount, {
+        role: typeof record.role === "string"
+          ? record.role
+          : typeof record.tag === "string"
+            ? roleFromTagAndText(record.tag, "")
+            : "Text",
+        font_size: stringOrUndefined(record.fontSize ?? record.font_size),
+        line_height: stringOrUndefined(record.lineHeight ?? record.line_height),
+        font_weight: stringOrUndefined(record.fontWeight ?? record.font_weight),
+        letter_spacing: stringOrUndefined(record.letterSpacing ?? record.letter_spacing),
+        text_transform: stringOrUndefined(record.textTransform ?? record.text_transform),
+        color: stringOrUndefined(record.color),
+      });
+    }
+  }
+
+  return [...usage.values()]
+    .sort((a, b) => {
+      if (b.usage_count !== a.usage_count) {
+        return b.usage_count - a.usage_count;
+      }
+      return a.family.localeCompare(b.family);
+    });
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -515,6 +890,7 @@ function normalizeStyleTreeEntries(value: unknown): Array<{
   node_path: string;
   tag_name: string;
   text_sample: string;
+  text_styles: Record<string, string>;
   rect: {
     top: number;
     left: number;
@@ -527,7 +903,7 @@ function normalizeStyleTreeEntries(value: unknown): Array<{
     return [];
   }
   return value
-    .slice(0, 3)
+    .slice(0, 8)
     .map((entry) => (entry && typeof entry === "object" ? entry as Record<string, unknown> : null))
     .filter((entry): entry is Record<string, unknown> => Boolean(entry))
     .map((entry) => {
@@ -545,9 +921,30 @@ function normalizeStyleTreeEntries(value: unknown): Array<{
         node_path: typeof entry.nodePath === "string" ? entry.nodePath : "",
         tag_name: typeof entry.tagName === "string" ? entry.tagName : "",
         text_sample: typeof entry.textSample === "string" ? cleanSnippet(entry.textSample, 80) : "",
+        text_styles: pickTypographyStyles(toStringMap(entry.styles)),
         rect: rectValue,
       };
     });
+}
+
+function pickTypographyStyles(styles: Record<string, string>): Record<string, string> {
+  const keys = [
+    "font-family",
+    "font-size",
+    "font-style",
+    "font-weight",
+    "line-height",
+    "letter-spacing",
+    "text-transform",
+    "color",
+  ];
+  const output: Record<string, string> = {};
+  for (const key of keys) {
+    if (styles[key]) {
+      output[key] = styles[key];
+    }
+  }
+  return output;
 }
 
 function collectResponsiveEvidenceScreenshotPaths(
@@ -662,11 +1059,10 @@ function buildPromptInput(input: {
   curatedManifestPath: string;
   evidenceAgentPath: string;
   responsiveHoverEvidencePath?: string;
+  visualContextPath?: string;
+  designMdMode?: StyleMdDesignMdMode;
   curatedManifest: StyleMdCuratedManifest;
-  typographyInventory: Array<{
-    family: string;
-    usage_count: number;
-  }>;
+  typographyInventory: TypographyInventoryEntry[];
   requiredTypographyFamilies: string[];
 }): StyleguidePromptInput {
   const {
@@ -676,6 +1072,8 @@ function buildPromptInput(input: {
     curatedManifestPath,
     evidenceAgentPath,
     responsiveHoverEvidencePath,
+    visualContextPath,
+    designMdMode,
     curatedManifest,
     typographyInventory,
     requiredTypographyFamilies,
@@ -699,10 +1097,17 @@ function buildPromptInput(input: {
       study_label: unit.study_label,
       component_ids: [...unit.component_ids],
     })),
+    ...(designMdMode === "vision"
+      ? {
+        design_md_mode: "vision" as const,
+        visual_context: visualContextPath ? toRunRelative(runDir, visualContextPath) : null,
+      }
+      : {}),
   };
 }
 
 function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
+  const isVisionMode = promptInput.design_md_mode === "vision";
   return [
     "Generate final style.md from curated compact evidence.",
     "You are in an isolated read-only workspace containing only approved agent artifacts.",
@@ -715,7 +1120,10 @@ function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
     "- styleguide/evidence.agent.json (Entry point)",
     "- semantic_analysis.json (DESIGN TOKEN SOURCE OF TRUTH)",
     "- semantic_structure.json (PAGE STRUCTURE SOURCE OF TRUTH)",
-    "- components/<id>/ (Specific component details)",
+    ...(isVisionMode && promptInput.visual_context
+      ? ["- styleguide/visual_context.json (SCREENSHOT VISUAL CONTEXT for composition, usage, media, and page recipes)"]
+      : []),
+    "- components/<id>/ (Specific component details, when curated units exist)",
     "",
     "Output requirements:",
     "1. Output markdown only (DESIGN.md format). The output MUST start with '# ' (an H1 heading).",
@@ -724,10 +1132,25 @@ function buildStyleguidePrompt(promptInput: StyleguidePromptInput): string {
     "4. ATMOSPHERIC DEPTH: Use semantic_structure.json to understand the surface hierarchy (canvas, hero, card, etc.) and preserve visual atmosphere.",
     "5. IDENTIFY BRAND MOOD: Classify the site style (e.g., Cinematic, Brutalist, Luxury, Corporate) based on spacing, typography weight, and shadow usage.",
     "6. COMPOSITED APPEARANCE: Prioritize the 'effective' backgrounds and area-weighted colors over raw CSS values.",
+    "6a. SOURCE-AWARE COLOR NAMING: If semantic_analysis.palette.brand or palette.allObserved roles include `visual_brand_asset`, treat those colors as logo/wordmark/brand-mark colors and include them separately in the Color System. Do NOT merge them with text/surface colors. Computed DOM text colors must be named by role (e.g. Warm Taupe Text), not as site-name brand colors unless CSS variable names or brand asset evidence explicitly confirm that naming.",
+    "6b. PALETTE USAGE: For every major color, state where it is used. Distinguish text/border/button colors from logo/brand-mark colors and from product/photography colors.",
     "7. SNAPPING: Use the normalized/snapped pixel values for spacing and radius.",
-    "8. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context.",
+    "8. TYPOGRAPHY COVERAGE: Explicitly cover all required observed families from run context. For each type role, include observed font-size, line-height, weight, letter-spacing, and example usage when present in styleguide/typography.inventory.json or component style_tree evidence. If a value is not present, write [unconfirmed] rather than omitting the field.",
     "9. GROUNDING: Every claim MUST be grounded in evidence; use '[unconfirmed]' where evidence is weak or missing.",
     "10. STRUCTURED JSON: At the end of the markdown, include a fenced code block labeled `stylemd-json`. You MUST use ONLY these observed families: " + promptInput.required_typography_families.join(", ") + ". Schema: { \"typography\": { \"display\": \"Font Name\", \"body\": \"Font Name\", \"scale\": \"modern\" | \"editorial\" }, \"fonts\": [ { \"name\": \"Font Name\", \"role\": \"Display\" | \"Body\" | \"UI\" | \"Mono\" } ], \"palette\": [ { \"name\": \"Label\", \"hex\": \"#HEX\", \"desc\": \"role\" } ], \"mood\": \"MoodName\", \"radius\": \"sharp\" | \"medium\" | \"pill\" | \"organic\", \"spacing\": \"4px\" | \"8px\" | string, \"cornerRadius\": \"4px\" | \"8px\" | string, \"accentColor\": \"#HEX\" }.",
+    ...(isVisionMode
+      ? [
+        "",
+        "Vision-mode requirements:",
+        "11. USAGE-RICH FORMAT: Include these sections: Design Personality, Color System, Typography System, Layout/Grid/Spacing, Composition Rules, Imagery & Media, Elevation/Borders/Shape, Navigation & Header System, Components & Usage Scenarios, Interaction & Motion, Responsive Behavior, Page Recipes, Do's and Don'ts.",
+        "12. PRACTICAL USAGE: For major colors, type roles, layout patterns, and components, state where to use them, where not to use them, common scenarios, typical placement, and pairings.",
+        "13. PAGE RECIPES: Include concrete guidance for common applicable pages such as homepage, landing page, product/ecommerce page, editorial/content page, form/contact page, gallery, and simple marketing page.",
+        "14. SHOWCASE ALIGNMENT: Write guidance that can power a visual gallery with concise labels, not a debug/evidence report.",
+        "15. DO NOT include an Evidence & Confidence section or an Agent Implementation Guide section.",
+        "16. DO'S AND DON'TS FORMAT: The Do's and Don'ts section MUST contain `### Do's` and `### Don'ts` subsections. Each subsection MUST be a markdown bullet list using `- ...` items, not prose, numbered lists, tables, or comma-separated text.",
+        "17. NAVIGATION DETAIL: Navigation & Header System MUST cover structure, positioning, visual treatment, typography with observed sizes/weights, interaction states, desktop behavior, mobile behavior, utility actions, and when to use sticky, fixed, overlay, drawer, sidebar, dropdown, or mega-menu patterns if observed. If a detail is not visible, mark it [unconfirmed] rather than omitting navigation.",
+      ]
+      : []),
     "",
     "Run context (JSON):",
     JSON.stringify(promptInput, null, 2),
@@ -742,6 +1165,7 @@ function buildRetryPrompt(input: {
   previousDraft: string;
 }): string {
   const { promptInput, qualityIssues, previousDraft } = input;
+  const isVisionMode = promptInput.design_md_mode === "vision";
   return [
     "Rewrite style.md from evidence with higher coverage and quality.",
     "Use only these tools: Read, Grep, Glob, LS.",
@@ -753,7 +1177,18 @@ function buildRetryPrompt(input: {
     "",
     "Keep markdown only. The output MUST start with '# ' (H1 heading). ABSOLUTELY NO raw CSS rules, selectors, or stylesheet content anywhere in the output — describe styles in plain English prose only.",
     "ENSURE the `stylemd-json` block is present and accurate at the end.",
+    "SOURCE-AWARE COLORS: Use `visual_brand_asset` colors as logo/wordmark colors only. Name computed DOM text colors by their role unless brand-token or brand-asset evidence confirms a brand name. Include where each major color is used.",
+    ...(isVisionMode
+      ? [
+        "VISION MODE: Include usage-rich sections for Design Personality, Composition Rules, Imagery & Media, Navigation & Header System, Components & Usage Scenarios, Interaction & Motion, Responsive Behavior, Page Recipes, and Do's and Don'ts.",
+        "VISION MODE: Use practical phrasing such as 'Use for', 'Do not use for', 'Common scenarios', 'Typical placement', and 'Pairs well with'.",
+        "VISION MODE: Navigation & Header System must describe navbar/header structure, positioning, visual treatment, desktop/mobile behavior, menu/dropdown/drawer/sidebar patterns, and utility actions.",
+        "VISION MODE: Format Do's and Don'ts as `### Do's` and `### Don'ts` subsections with markdown `- ...` bullet items only.",
+        "VISION MODE: Do not add Evidence & Confidence or Agent Implementation Guide sections.",
+      ]
+      : []),
     "Use styleguide/evidence.agent.json as source of truth.",
+    ...(isVisionMode && promptInput.visual_context ? ["Use styleguide/visual_context.json for screenshot-derived visual composition and usage guidance."] : []),
     "",
     "Run context (JSON):",
     JSON.stringify(
@@ -762,6 +1197,8 @@ function buildRetryPrompt(input: {
         url: promptInput.url,
         unit_count: promptInput.unit_count,
         evidence_agent: promptInput.evidence_agent,
+        visual_context: promptInput.visual_context,
+        design_md_mode: promptInput.design_md_mode,
         required_typography_families: promptInput.required_typography_families,
       },
       null,
@@ -780,6 +1217,7 @@ function escapeRegExp(value: string): string {
 function validateStyleguideMarkdownQuality(
   markdown: string,
   requiredTypographyFamilies: string[],
+  designMdMode: StyleMdDesignMdMode = "baseline",
 ): string[] {
   const issues: string[] = [];
   const trimmed = markdown.trim();
@@ -858,7 +1296,105 @@ function validateStyleguideMarkdownQuality(
     issues.push(`missing coverage areas: ${missingCoverageLabels.join(", ")}`);
   }
 
+  if (designMdMode === "vision") {
+    const visionCoverageChecks: Array<{ label: string; pattern: RegExp }> = [
+      { label: "design personality", pattern: /design personality|brand style|mood|visual energy/i },
+      { label: "composition rules", pattern: /composition rules|composition|visual hierarchy|section rhythm/i },
+      { label: "imagery and media", pattern: /imagery|media|image treatment|crop|framing/i },
+      { label: "navigation and header", pattern: /navigation|navbar|header|menu|drawer|mega-menu|sticky/i },
+      { label: "component usage scenarios", pattern: /usage scenarios|common scenarios|use for|when to use|do not use/i },
+      { label: "page recipes", pattern: /page recipes|homepage|landing page|product page|editorial/i },
+    ];
+    const missingVisionLabels = visionCoverageChecks
+      .filter((check) => !check.pattern.test(markdown))
+      .map((check) => check.label);
+    if (missingVisionLabels.length > 1) {
+      issues.push(`vision mode missing usage-rich areas: ${missingVisionLabels.join(", ")}`);
+    }
+    if (/evidence\s*&?\s*confidence|agent implementation guide/i.test(noFenced)) {
+      issues.push("vision mode must not include Evidence & Confidence or Agent Implementation Guide sections");
+    }
+    issues.push(...validateVisionNavigationCoverage(noFenced));
+    issues.push(...validateVisionDoDontBulletLists(noFenced));
+  }
+
   return issues;
+}
+
+function validateVisionNavigationCoverage(markdown: string): string[] {
+  const section = extractMarkdownSection(
+    markdown,
+    /^##\s+(?:Navigation\s*&\s*Header|Header\s*&\s*Navigation|Navigation\s+and\s+Header|Navigation\s*&\s*Header\s+System|Navigation\s+\/\s+Header|Header\s+\/\s+Navigation|Navbar|Navigation\s+Bar|Header\s+System)\s*$/im,
+    2,
+  );
+
+  if (!section) {
+    return ["vision mode must include a dedicated Navigation & Header System section"];
+  }
+
+  const checks: Array<{ label: string; pattern: RegExp }> = [
+    { label: "structure", pattern: /structure|layout|logo|link|menu|utility|cart|search|account/i },
+    { label: "positioning", pattern: /sticky|fixed|static|overlay|transparent|top|sidebar|rail|drawer/i },
+    { label: "responsive behavior", pattern: /mobile|desktop|tablet|hamburger|drawer|collapse|breakpoint/i },
+    { label: "interaction states", pattern: /hover|active|focus|selected|open|close|dropdown|mega-menu|transition/i },
+  ];
+  const missing = checks
+    .filter((check) => !check.pattern.test(section))
+    .map((check) => check.label);
+
+  return missing.length > 1
+    ? [`Navigation & Header System is missing details for: ${missing.join(", ")}`]
+    : [];
+}
+
+function validateVisionDoDontBulletLists(markdown: string): string[] {
+  const issues: string[] = [];
+  const doDontSection = extractMarkdownSection(
+    markdown,
+    /^##\s+Do['’]?s\s+and\s+Don['’]?ts\s*$/im,
+    2,
+  );
+
+  if (!doDontSection) {
+    return ["vision mode must include a Do's and Don'ts section"];
+  }
+
+  const doSection = extractMarkdownSection(doDontSection, /^###\s+Do['’]?s\s*$/im, 3);
+  const dontSection = extractMarkdownSection(doDontSection, /^###\s+Don['’]?ts\s*$/im, 3);
+  if (!doSection || !dontSection) {
+    issues.push("Do's and Don'ts section must contain ### Do's and ### Don'ts subsections");
+    return issues;
+  }
+
+  const doBulletCount = countMarkdownBullets(doSection);
+  const dontBulletCount = countMarkdownBullets(dontSection);
+  if (doBulletCount < 3) {
+    issues.push("### Do's must contain at least 3 markdown bullet items");
+  }
+  if (dontBulletCount < 3) {
+    issues.push("### Don'ts must contain at least 3 markdown bullet items");
+  }
+
+  return issues;
+}
+
+function extractMarkdownSection(markdown: string, headingPattern: RegExp, level: number): string | null {
+  const match = headingPattern.exec(markdown);
+  if (!match || match.index === undefined) {
+    return null;
+  }
+  const sectionStart = match.index + match[0].length;
+  const rest = markdown.slice(sectionStart);
+  const nextHeadingPattern = new RegExp(`^#{1,${level}}\\s+`, "m");
+  const nextHeadingMatch = nextHeadingPattern.exec(rest);
+  return (nextHeadingMatch ? rest.slice(0, nextHeadingMatch.index) : rest).trim();
+}
+
+function countMarkdownBullets(markdown: string): number {
+  return markdown
+    .split(/\r?\n/)
+    .filter((line) => /^\s*[-*]\s+\S/.test(line))
+    .length;
 }
 
 function isRateLimitFailure(reason?: string): boolean {
@@ -903,7 +1439,7 @@ function buildRateLimitedFallbackStyleMarkdown(input: {
     "",
     "## Typography",
     `- Required families observed: ${typographyFamilies}`,
-    "- Local font loading should use ../page_styles/fonts/ with explicit fallback stacks.",
+    "- Describe typography by role, hierarchy, tone, and usage. Do not expose font loading paths or fallback mechanics in user-facing copy.",
     "",
     "## Color and Surfaces",
     "- [unconfirmed] Derive final palette from styleguide/evidence.agent.json once quota is available.",
@@ -928,7 +1464,7 @@ function buildShowcasePrompt(promptInput: ShowcasePromptInput): string {
     "Output HTML only (no markdown fences, no JSON, no preamble).",
     "Use only these tools: Read, Grep, Glob, LS.",
     "Never call Agent.",
-    "Use relative workspace paths exactly as provided (for example 'page_styles/fonts.local.css', not '/page_styles/fonts.local.css').",
+    "Use relative workspace paths exactly as provided for internal HTML/CSS asset references.",
     "For large JSON/text files, use Read with non-negative offset + limit windows.",
     "",
     "Hard constraints:",
@@ -937,8 +1473,12 @@ function buildShowcasePrompt(promptInput: ShowcasePromptInput): string {
     "3. Use local font families from run context and reflect typography faithfully.",
     "4. Keep everything deterministic and self-contained for local rendering.",
     "5. Use plain numeric section labels like '1, 2, 3...' (never use the section symbol '§').",
-    "6. Typography section must explicitly state local WOFF2 loading from '../page_styles/fonts/' and fallback behavior.",
+    "6. Visible copy must describe typography by design role and usage only. Never mention WOFF2, font files, font directories, font loading, @font-face, internal paths, or fallback mechanics.",
     "7. Layout Containers section must explain why containers exist and when full-bleed layouts can omit them.",
+    "8. If the page includes Do's and Don'ts, render them as two visible bullet lists. Do not render them as prose paragraphs, numbered lists, or tables.",
+    "9. The Typography section must visibly list concrete observed values from typography_inventory: font family, font-size, line-height, weight, letter-spacing when available, role, and where it is used. Round font sizes, line-heights, dimensions, and spacing to human-readable whole pixels. Describe letter-spacing as normal, tight, or loose unless a precise value is essential. Never print browser-precision values like 15.1778px.",
+    "10. If style.md includes Navigation & Header System, render it as a distinct visible section that covers navbar/header structure, dimensions, positioning, typography sizes/weights, desktop/mobile behavior, menu/dropdown/drawer/sidebar patterns, and utility actions.",
+    "11. If navigation_header_component is provided, do NOT freehand-recreate the nav as a fake finished component. Render an observed header evidence panel marked with data-stylemd-nav-evidence=\"true\" using its reference screenshot and measured visual facts. Do not show raw selectors, CSS class names, DOM trees, code-like node paths, or implementation/debug labels in visible copy.",
     "",
     "Run context (JSON):",
     JSON.stringify(promptInput, null, 2),
@@ -968,8 +1508,12 @@ function buildShowcaseRepairPrompt(input: {
     "",
     "Preserve intended visual fidelity, but fix all failures and return one complete HTML document.",
     "Use plain numeric section labels only (no '§').",
-    "Ensure typography copy explains local fonts from '../page_styles/fonts/' plus fallback behavior.",
+    "Ensure typography copy describes design role and usage only; never mention WOFF2, font files, font directories, font loading, @font-face, internal paths, or fallback mechanics.",
     "Ensure Layout Containers copy explains purpose and optional full-bleed usage.",
+    "Ensure Do's and Don'ts render as two visible bullet lists, not prose paragraphs, numbered lists, or tables.",
+    "Ensure Navigation & Header System appears as a distinct visible section when present in style.md.",
+    "Ensure the Typography section visibly includes concrete observed font sizes, line-heights, weights, and role usage from typography_inventory when available. Round values to human-readable whole pixels and avoid browser-precision decimals.",
+    "If navigation_header_component is provided, do NOT freehand-recreate it as a fake finished nav. Include an observed header evidence panel in the Navigation & Header System section marked with data-stylemd-nav-evidence=\"true\". Do not show raw selectors, CSS class names, DOM trees, or code-like node paths in visible copy.",
     "",
     "Run context (compact JSON):",
     JSON.stringify({
@@ -977,6 +1521,7 @@ function buildShowcaseRepairPrompt(input: {
       url: promptInput.url,
       evidence_agent: promptInput.evidence_agent,
       full_screenshot: promptInput.full_screenshot,
+      navigation_header_component: promptInput.navigation_header_component,
       required_typography_families: promptInput.required_typography_families,
       font_assets: promptInput.font_assets,
       guardrails: promptInput.guardrails,
@@ -1553,6 +2098,8 @@ function buildFontAliasCss(input: {
 function validateShowcaseHtml(input: {
   html: string;
   requiredTypographyFamilies: string[];
+  requireNavigationHeaderEvidence?: boolean;
+  typographyInventory?: TypographyInventoryEntry[];
 }): string[] {
   const issues: string[] = [];
   const normalized = input.html.trim();
@@ -1576,6 +2123,48 @@ function validateShowcaseHtml(input: {
   if (/\/api\/stylemd-artifacts\/artifact\?/i.test(normalized)) {
     issues.push("showcase contains legacy /api/stylemd-artifacts/artifact references");
   }
+  const visibleText = extractVisibleShowcaseText(normalized);
+  const implementationDetailIssue = findShowcaseImplementationDetailIssue(visibleText);
+  if (implementationDetailIssue) {
+    issues.push(implementationDetailIssue);
+  }
+  const debugEvidenceIssue = findShowcaseDebugEvidenceIssue(visibleText);
+  if (debugEvidenceIssue) {
+    issues.push(debugEvidenceIssue);
+  }
+  const precisionMeasurementIssue = findShowcasePrecisionMeasurementIssue(visibleText);
+  if (precisionMeasurementIssue) {
+    issues.push(precisionMeasurementIssue);
+  }
+  const hasObservedTypeSizes = input.typographyInventory?.some((entry) => (entry.observed_sizes?.length ?? 0) > 0) ?? false;
+  const hasObservedLineHeights = input.typographyInventory?.some((entry) => (entry.observed_line_heights?.length ?? 0) > 0) ?? false;
+  const hasObservedWeights = input.typographyInventory?.some((entry) => (entry.observed_weights?.length ?? 0) > 0) ?? false;
+  if (hasObservedTypeSizes || hasObservedLineHeights || hasObservedWeights) {
+    if (!/Typography/i.test(normalized)) {
+      issues.push("showcase must include a visible Typography section");
+    }
+    const typographySection = extractHtmlSectionText(normalized, /typography/i);
+    if (hasObservedTypeSizes && !/(?:\d+(?:\.\d+)?px|\d+(?:\.\d+)?rem|\d+(?:\.\d+)?em)/i.test(typographySection)) {
+      issues.push("showcase Typography section must include concrete observed font sizes");
+    }
+    if (hasObservedLineHeights && !/(?:line[-\s]?height|lh|leading)\b/i.test(typographySection)) {
+      issues.push("showcase Typography section must include line-height/leading details when observed");
+    }
+    if (hasObservedWeights && !/(?:weight|font[-\s]?weight|[1-9]00)\b/i.test(typographySection)) {
+      issues.push("showcase Typography section must include font-weight details when observed");
+    }
+  }
+  if (input.requireNavigationHeaderEvidence) {
+    if (!/Navigation\s*(?:&amp;|&)?\s*Header System/i.test(normalized)) {
+      issues.push("showcase must include a visible Navigation & Header System section");
+    }
+    if (!/data-stylemd-nav-evidence\s*=\s*["']true["']/i.test(normalized)) {
+      issues.push("showcase must include an observed header evidence panel marked with data-stylemd-nav-evidence=\"true\"");
+    }
+    if (/data-stylemd-nav-recreation\s*=\s*["']true["']/i.test(normalized)) {
+      issues.push("showcase must not include fake freehand nav recreation marked data-stylemd-nav-recreation=\"true\"");
+    }
+  }
 
   for (const family of input.requiredTypographyFamilies) {
     const familyPattern = new RegExp(escapeRegExp(family), "i");
@@ -1585,6 +2174,73 @@ function validateShowcaseHtml(input: {
   }
 
   return issues;
+}
+
+function extractHtmlSectionText(html: string, headingPattern: RegExp): string {
+  const headingMatch = headingPattern.exec(html);
+  if (!headingMatch || headingMatch.index === undefined) {
+    return extractVisibleShowcaseText(html);
+  }
+  const sectionStart = Math.max(0, html.lastIndexOf("<section", headingMatch.index));
+  const start = sectionStart >= 0 ? sectionStart : headingMatch.index;
+  const nextSection = html.indexOf("<section", headingMatch.index + headingMatch[0].length);
+  const slice = nextSection >= 0 ? html.slice(start, nextSection) : html.slice(start);
+  return extractVisibleShowcaseText(slice);
+}
+
+function extractVisibleShowcaseText(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/gi, "\"")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findShowcaseImplementationDetailIssue(visibleText: string): string | undefined {
+  const prohibitedPatterns = [
+    /\bwoff2\b/i,
+    /\bfont[-\s]?loading\b/i,
+    /\b@font-face\b/i,
+    /\bfonts?\.local\.css\b/i,
+    /\bpage_styles\/fonts\b/i,
+    /\blocal\s+(?:woff2\s+)?fonts?\b/i,
+    /\bfonts?\s+(?:directory|directories|files?)\b/i,
+    /\b(?:system|browser|universal)\s+fallbacks?\b/i,
+    /\bfallback\s+(?:font|fonts|stack|stacks|behavior|mechanic|mechanics)\b/i,
+    /\bfonts?\s+(?:fail|fails|failed)\s+to\s+load\b/i,
+  ];
+  const matched = prohibitedPatterns.some((pattern) => pattern.test(visibleText));
+  return matched
+    ? "showcase visible copy must not mention font loading internals, local font files/paths, WOFF2, or fallback mechanics"
+    : undefined;
+}
+
+function findShowcaseDebugEvidenceIssue(visibleText: string): string | undefined {
+  const prohibitedPatterns = [
+    /\bselector\s*:/i,
+    /\bobserved\s+selector\b/i,
+    /\bannotated\s+dom\s+structure\b/i,
+    /<\s*(?:nav|header|div|section|main|button|a)\b/i,
+    /(?:^|\s)\.[a-z][a-z0-9_-]{2,}\b/i,
+  ];
+  const matched = prohibitedPatterns.some((pattern) => pattern.test(visibleText));
+  return matched
+    ? "showcase visible copy must not expose raw selectors, CSS class names, DOM trees, or implementation/debug evidence"
+    : undefined;
+}
+
+function findShowcasePrecisionMeasurementIssue(visibleText: string): string | undefined {
+  return /\b-?\d+\.\d+px\b/i.test(visibleText)
+    ? "showcase visible copy must round browser-computed decimal pixel values to human-readable whole pixels"
+    : undefined;
 }
 
 function collectPathCandidates(value: unknown): string[] {
@@ -1939,6 +2595,7 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
   } = input;
   const runtime = input.runtime ?? resolveStyleMdRuntimeConfig("claude");
   const runClaudeQuery = input.runClaudeQuery ?? runClaudeStyleguideQuery;
+  const designMdMode = input.designMdMode ?? "baseline";
   const runDir = getStyleMdRunDir(runId);
   const artifacts: StyleMdArtifactRecord[] = [];
 
@@ -1951,21 +2608,14 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
   assertNotAborted(signal);
 
   if (curatedManifest.units.length === 0) {
-    const warning = "Styleguide synthesis failed. Reason: no curated units available.";
-    const validationArtifact = await writeStyleMdJson(runId, join("styleguide", "validation.json"), {
-      ok: false,
-      attempts: 0,
-      error: warning,
-      mode: "single_pass_with_escalation_retry",
-    });
-    const responseRawArtifact = await writeStyleMdText(
+    emitObservedStyleMdEvent(runId, {
+      type: "stylemd_action",
+      source: "system",
       runId,
-      join("styleguide", "response.raw.txt"),
-      `${warning}\n`,
-      "text",
-    );
-    artifacts.push(validationArtifact, responseRawArtifact);
-    throw new StyleguideStageError(warning, warning, artifacts);
+      stage: "styleguide",
+      level: "warn",
+      message: "No curated component units found. Generating style.md from semantic analysis and page structure evidence.",
+    });
   }
 
   const responsiveHoverEvidence = responsiveHoverEvidencePath
@@ -1988,7 +2638,10 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
   const evidenceAgentArtifact = await writeStyleMdJson(runId, join("styleguide", "evidence.agent.json"), evidenceAgent);
   artifacts.push(evidenceAgentArtifact);
 
-  const typographyInventory = buildTypographyInventory(evidenceAgent);
+  let typographyInventory = buildTypographyInventory(evidenceAgent);
+  if (typographyInventory.length === 0) {
+    typographyInventory = buildTypographyInventoryFromSemanticAnalysis(await safeReadJson(semanticAnalysisPath));
+  }
   const requiredTypographyFamilies = deriveRequiredTypographyFamilies(typographyInventory);
   const typographyInventoryArtifact = await writeStyleMdJson(
     runId,
@@ -2001,6 +2654,41 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
   );
   artifacts.push(typographyInventoryArtifact);
 
+  let visualContextPath: string | undefined;
+  let visualContextInputTokens = 0;
+  let visualContextOutputTokens = 0;
+  if (designMdMode === "vision") {
+    const visualContextResult = await runStyleMdVisualContext({
+      runId,
+      url,
+      runtime,
+      curatedManifest,
+      responsiveHoverEvidence,
+      signal,
+      runVisualContextQuery: input.runVisualContextQuery,
+    });
+    artifacts.push(...visualContextResult.artifacts);
+    visualContextInputTokens = visualContextResult.query.inputTokens;
+    visualContextOutputTokens = visualContextResult.query.outputTokens;
+    const visualArtifact = visualContextResult.artifacts.find((artifact) =>
+      artifact.path.endsWith(`${sep}visual_context.json`) || artifact.path.endsWith("/visual_context.json"));
+    visualContextPath = visualArtifact?.path;
+
+    if (visualContextResult.context.status !== "completed") {
+      emitObservedStyleMdEvent(runId, {
+        type: "stylemd_action",
+        source: "system",
+        runId,
+        stage: "styleguide",
+        level: "warn",
+        message: "Vision visual context failed; continuing with text evidence.",
+        detail: {
+          reason: visualContextResult.context.error,
+        },
+      });
+    }
+  }
+
   const promptInput = buildPromptInput({
     runId,
     url,
@@ -2008,6 +2696,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
     curatedManifestPath,
     evidenceAgentPath: evidenceAgentArtifact.path,
     responsiveHoverEvidencePath,
+    visualContextPath,
+    designMdMode,
     curatedManifest,
     typographyInventory,
     requiredTypographyFamilies,
@@ -2026,7 +2716,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
       typographyInventoryArtifact.path,
       semanticAnalysisPath,
       semanticStructurePath,
-    ],
+      visualContextPath ?? "",
+    ].filter(Boolean),
   });
 
   const systemPrompt = [
@@ -2050,6 +2741,7 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
       unit_count: curatedManifest.units.length,
       workspace: toRunRelative(runDir, workspaceDir),
       retry_policy: "one_escalation_retry",
+      design_md_mode: designMdMode,
     },
   });
 
@@ -2058,8 +2750,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
   let styleMarkdown = "";
   let failureReason: string | undefined;
   let qualityIssues: string[] = [];
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
+  let totalInputTokens = visualContextInputTokens;
+  let totalOutputTokens = visualContextOutputTokens;
   const queryStartedAt = Date.now();
 
   try {
@@ -2088,7 +2780,7 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
     );
     artifacts.push(pass1Artifact);
 
-    qualityIssues = validateStyleguideMarkdownQuality(responseRaw, requiredTypographyFamilies);
+    qualityIssues = validateStyleguideMarkdownQuality(responseRaw, requiredTypographyFamilies, designMdMode);
     if (qualityIssues.length > 0) {
       attempt += 1;
       const retryRaw = await runClaudeQuery({
@@ -2120,7 +2812,7 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
       artifacts.push(pass2Artifact);
 
       responseRaw = retryRaw;
-      qualityIssues = validateStyleguideMarkdownQuality(responseRaw, requiredTypographyFamilies);
+      qualityIssues = validateStyleguideMarkdownQuality(responseRaw, requiredTypographyFamilies, designMdMode);
       if (qualityIssues.length > 0) {
         throw new Error(`Styleguide quality check failed after retry: ${qualityIssues.join("; ")}`);
       }
@@ -2171,6 +2863,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
     const validationArtifact = await writeStyleMdJson(runId, join("styleguide", "validation.json"), {
       ok: false,
       mode: "single_pass_with_escalation_retry",
+      design_md_mode: designMdMode,
+      visual_context: visualContextPath ? toRunRelative(runDir, visualContextPath) : null,
       attempts: attempt,
       quality_issues: qualityIssues,
       query: {
@@ -2212,6 +2906,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
   const validationArtifact = await writeStyleMdJson(runId, join("styleguide", "validation.json"), {
     ok: true,
     mode: "single_pass_with_escalation_retry",
+    design_md_mode: designMdMode,
+    visual_context: visualContextPath ? toRunRelative(runDir, visualContextPath) : null,
     attempts: attempt,
     quality_issues: [],
     query: {
@@ -2249,6 +2945,8 @@ export async function runStyleguideStage(input: RunStyleguideInput): Promise<Sta
       typographyInventoryPath: typographyInventoryArtifact.path,
       typographyInventory,
       requiredTypographyFamilies,
+      designMdMode,
+      visualContextPath,
       query: {
         maxTurns: 0,
         timeoutMs: 0,
@@ -2307,7 +3005,15 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
     const typographyArtifact = await safeReadJson(input.typographyInventoryPath);
     if (typographyArtifact && typeof typographyArtifact === "object") {
       const typographyObject = typographyArtifact as {
-        inventory?: Array<{ family?: unknown; usage_count?: unknown }>;
+        inventory?: Array<{
+          family?: unknown;
+          usage_count?: unknown;
+          roles?: unknown;
+          observed_sizes?: unknown;
+          observed_line_heights?: unknown;
+          observed_weights?: unknown;
+          samples?: unknown;
+        }>;
         required_families?: unknown;
       };
       if (typographyInventory.length === 0 && Array.isArray(typographyObject.inventory)) {
@@ -2315,6 +3021,36 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
           .map((entry) => ({
             family: typeof entry.family === "string" ? entry.family.trim() : "",
             usage_count: typeof entry.usage_count === "number" ? entry.usage_count : 0,
+            roles: Array.isArray(entry.roles)
+              ? entry.roles.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+              : [],
+            observed_sizes: Array.isArray(entry.observed_sizes)
+              ? entry.observed_sizes.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+              : [],
+            observed_line_heights: Array.isArray(entry.observed_line_heights)
+              ? entry.observed_line_heights.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+              : [],
+            observed_weights: Array.isArray(entry.observed_weights)
+              ? entry.observed_weights.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+              : [],
+            samples: Array.isArray(entry.samples)
+              ? entry.samples
+                .filter((sample): sample is Record<string, unknown> => Boolean(sample) && typeof sample === "object")
+                .slice(0, 8)
+                .map((sample) => ({
+                  role: typeof sample.role === "string" && sample.role.trim() ? sample.role.trim() : "Text",
+                  component_id: stringOrUndefined(sample.component_id),
+                  node_path: stringOrUndefined(sample.node_path),
+                  tag_name: stringOrUndefined(sample.tag_name),
+                  text_sample: stringOrUndefined(sample.text_sample),
+                  font_size: stringOrUndefined(sample.font_size),
+                  line_height: stringOrUndefined(sample.line_height),
+                  font_weight: stringOrUndefined(sample.font_weight),
+                  letter_spacing: stringOrUndefined(sample.letter_spacing),
+                  text_transform: stringOrUndefined(sample.text_transform),
+                  color: stringOrUndefined(sample.color),
+                }))
+              : [],
           }))
           .filter((entry) => entry.family.length > 0);
       }
@@ -2330,6 +3066,11 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
     requiredTypographyFamilies = deriveRequiredTypographyFamilies(typographyInventory);
   }
 
+  const navigationHeaderComponent = pickNavigationHeaderComponent(runDir, curatedManifest);
+  const requireNavigationHeaderEvidence = Boolean(
+    navigationHeaderComponent && /Navigation\s*(?:&|&amp;)?\s*Header System/i.test(normalizedStyleMarkdown),
+  );
+
   const showcasePromptInput: ShowcasePromptInput = {
     run_id: runId,
     url,
@@ -2337,6 +3078,7 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
     style_md: normalizedStyleMarkdown,
     full_screenshot: "full_screenshot.png",
     evidence_agent: toRunRelative(runDir, evidenceAgentPath),
+    navigation_header_component: navigationHeaderComponent,
     typography_inventory: typographyInventory,
     required_typography_families: requiredTypographyFamilies,
     font_assets: {
@@ -2454,8 +3196,12 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
       "No script tags. No JavaScript.",
       "No external http/https assets.",
       "Use plain numeric section labels (no '§').",
-      "Typography copy must explain local fonts from '../page_styles/fonts/' and fallback behavior.",
+      "Typography copy must describe design role and usage only. Never mention WOFF2, font files, font directories, font loading, @font-face, internal paths, or fallback mechanics.",
+      "Typography sections must include concrete observed font sizes, line-heights, weights, and role usage when typography inventory provides them.",
       "Layout container copy must explain purpose and optional full-bleed usage.",
+      "Do's and Don'ts must render as two visible bullet lists, not prose paragraphs, numbered lists, or tables.",
+      "Navigation & Header System must render as a distinct visible section when present in style.md.",
+      "When navigation_header_component is present, do not freehand-recreate the header/nav as a fake finished component. Render observed header evidence marked with data-stylemd-nav-evidence=\"true\".",
     ].join("\n");
 
     let previousOutput = "";
@@ -2537,6 +3283,8 @@ export async function runShowcaseStage(input: RunShowcaseInput): Promise<StageOu
         ...validateShowcaseHtml({
           html: finalShowcaseHtml,
           requiredTypographyFamilies,
+          requireNavigationHeaderEvidence,
+          typographyInventory,
         }),
       ];
       const sandboxValidation = await validateShowcaseHtmlInSandbox({

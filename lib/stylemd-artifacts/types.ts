@@ -4,6 +4,7 @@ export const STYLEMD_PIPELINE_STAGES = ["capture", "extract", "dedup", "curate",
 
 export type StyleMdPipelineStageName = (typeof STYLEMD_PIPELINE_STAGES)[number];
 export type StyleMdProvider = "claude" | "kimi";
+export type StyleMdDesignMdMode = "baseline" | "vision";
 
 export type StyleMdRunStatus = "running" | "completed" | "completed_with_warnings" | "failed" | "canceled";
 
@@ -155,12 +156,15 @@ export interface StyleMdDesignTokenManifest {
     surface: string[];
     text: string[];
     muted: string[];
+    brand?: string[];
     allObserved: Array<{
       hex: string;
       areaWeight: number;
       frequency: number;
       roles: string[];
       confidence: "confirmed" | "inferred" | "weak_signal";
+      source?: "computed_style" | "screenshot_atmosphere" | "visual_brand_asset";
+      sourceLabel?: string;
     }>;
   };
   gradients: string[];
@@ -379,6 +383,8 @@ export interface StyleMdStyleguideResult {
     usage_count: number;
   }>;
   requiredTypographyFamilies: string[];
+  designMdMode?: StyleMdDesignMdMode;
+  visualContextPath?: string;
   query: {
     maxTurns: number;
     timeoutMs: number;
@@ -459,6 +465,7 @@ export interface StyleMdRunSummary {
   completedAt?: string;
   error?: string;
   warnings: string[];
+  designMdMode?: StyleMdDesignMdMode;
   artifacts: StyleMdArtifactRecord[];
   metrics: StyleMdMetrics;
   tokenUsage?: KimiTokenUsage;

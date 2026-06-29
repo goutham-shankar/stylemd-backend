@@ -1,4 +1,4 @@
-import { KimiClient, type ToolDefinition } from "@/lib/kimi/client";
+import { KimiClient, type KimiUserContentPart, type ToolDefinition } from "@/lib/kimi/client";
 import type { StyleMdRuntimeConfig } from "@/lib/stylemd-artifacts/provider";
 
 export interface KimiStyleguideQueryInput {
@@ -7,6 +7,16 @@ export interface KimiStyleguideQueryInput {
   runtime: StyleMdRuntimeConfig;
   systemPrompt: string;
   prompt: string;
+  signal: AbortSignal;
+  queryLabel?: string;
+  onTokenUsage?: (inputTokens: number, outputTokens: number) => void;
+}
+
+export interface KimiVisionContextQueryInput {
+  runId: string;
+  runtime: StyleMdRuntimeConfig;
+  systemPrompt: string;
+  content: KimiUserContentPart[];
   signal: AbortSignal;
   queryLabel?: string;
   onTokenUsage?: (inputTokens: number, outputTokens: number) => void;
@@ -55,7 +65,10 @@ export async function runKimiStyleguideQuery(input: KimiStyleguideQueryInput): P
   console.log(`\n\u2728 [KIMI] Running STYLEGUIDE/SHOWCASE stage for run: ${runId}`);
   console.log(`   Workspace: ${workspaceDir}`);
 
-  const client = new KimiClient();
+  const client = new KimiClient(
+    input.runtime.env.MOONSHOT_API_KEY || process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY,
+    input.runtime.queryModel || input.runtime.model,
+  );
 
   const tools: ToolDefinition[] = [
     {
@@ -165,4 +178,54 @@ export async function runKimiStyleguideQuery(input: KimiStyleguideQueryInput): P
   }
 
   throw new Error("Kimi styleguide query failed: max retries exceeded");
+}
+
+export async function runKimiVisionContextQuery(input: KimiVisionContextQueryInput): Promise<string> {
+  const {
+    runId,
+    runtime,
+    systemPrompt,
+    content,
+    onTokenUsage,
+  } = input;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { signal } = input;
+
+  console.log(`\n\uD83D\uDDBC\uFE0F  [KIMI] Running VISUAL CONTEXT stage for run: ${runId}`);
+
+  const client = new KimiClient(
+    runtime.env.MOONSHOT_API_KEY || process.env.MOONSHOT_API_KEY || process.env.KIMI_API_KEY,
+    runtime.queryModel || runtime.model,
+  );
+
+  const maxRetries = 1;
+  const retryDelayMs = 10_000;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await client.queryMultimodal(systemPrompt, content, {
+        onToken: (usage) => {
+          console.log(`   Visual context tokens - Input: ${usage.input_tokens}, Output: ${usage.output_tokens}`);
+          onTokenUsage?.(usage.input_tokens, usage.output_tokens);
+        },
+      });
+      console.log(`\u2705 [KIMI] VISUAL CONTEXT stage complete\n`);
+      return result.text;
+    } catch (error) {
+      const isTransient = isRateLimitError(error) || isTransientNetworkError(error);
+      const isLastAttempt = attempt >= maxRetries;
+      if (isTransient && !isLastAttempt) {
+        const delayS = (retryDelayMs / 1000).toFixed(1);
+        console.warn(`\u26A0\uFE0F  [KIMI] Visual context transient failure. Retrying in ${delayS}s (attempt ${attempt + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        continue;
+      }
+
+      throw new Error(
+        `Kimi visual context query failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  throw new Error("Kimi visual context query failed: max retries exceeded");
 }
